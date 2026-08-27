@@ -42,12 +42,14 @@ func logErr(msg: String): Unit {
 main() {
     let args = getCommandLine()[1..]
     var echoFlag = false
+    var authFlag = false
     var backend = "opencode acp"
     var storePath = ".pi-acp-sessions.json"
     var idx: Int64 = 0
     while (idx < args.size) {
         let a = args[idx]
         if (a == "--echo") { echoFlag = true }
+        else if (a == "--auth-required") { authFlag = true }
         else if (a == "--store") {
             idx++
             if (idx < args.size) { storePath = args[idx] }
@@ -55,6 +57,7 @@ main() {
         idx++
     }
     let echoMode = echoFlag
+    let authRequiredMode = authFlag
     let backendCmd = backend
 
     // ---- 后端连接（桥接客户端） ----
@@ -119,6 +122,15 @@ main() {
     let agent = AcpAgent(StdioTransport(), "acp-cj-pi-bridge", "0.1.0")
     agent.capabilities.loadSession = true
     agent.capabilities.promptCapabilities.image = true
+    agent.authRequired = authRequiredMode
+    if (authRequiredMode) {
+        let m = AuthMethod()
+        m.id = "pi_bridge_login"
+        m.name = "Authenticate with pi_bridge"
+        m.description = Some("demo: authenticate to open session creation")
+        agent.authMethods.add(m)
+        logErr("[pi_bridge] 认证门控已开启（--auth-required）")
+    }
     agent.capabilities.sessionCapabilities.list = Some(EmptyCapability())
     agent.capabilities.sessionCapabilities.delete = Some(EmptyCapability())
     agent.capabilities.sessionCapabilities.resume = Some(EmptyCapability())

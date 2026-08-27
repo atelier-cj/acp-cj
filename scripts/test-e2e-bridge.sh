@@ -29,3 +29,7 @@ timeout 180 ./target/release/bin/acp.examples.testclient "./target/release/bin/a
 echo ""
 echo "==> 3) session/load 历史重放（接真实 opencode）"
 python3 scripts/test-load-replay.py
+
+echo ""
+echo "==> 4) 认证门控 e2e（pi_bridge --auth-required）"
+python3 scripts/test-auth-e2e.py
