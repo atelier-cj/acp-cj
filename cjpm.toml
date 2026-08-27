@@ -1,0 +1,42 @@
+[dependencies]
+  "sonyflake" = "1.0.9"
+  "jsonvalue" = "1.1.0"
+  "ystyle::jsonrpc" = "0.7.2"
+
+[package]
+  cjc-version = "1.1.0"
+  compile-option = "-Woff unused"
+  description = "ACP (Agent Client Protocol) 框架，包含 Agent 侧与 Client 侧"
+  link-option = "-lstdx.crypto.digest"
+  name = "acp"
+  output-type = "static"
+  override-compile-option = ""
+  src-dir = ""
+  target-dir = ""
+  version = "0.1.0"
+  license = ["MulanPSL-2.0"]
+  authors = ["ystyle"]
+  repository = "https://atomgit.com/ystyle/acp-cj"
+
+[package.package-configuration."acp.examples.echo_agent"]
+output-type = "executable"
+compile-option = "--static"
+
+[package.package-configuration."acp.examples.testclient"]
+output-type = "executable"
+compile-option = "--static"
+
+[package.package-configuration."acp.examples.pi_bridge"]
+output-type = "executable"
+compile-option = "--static"
+
+[target.x86_64-unknown-linux-gnu.bin-dependencies]
+path-option = [ "${CANGJIE_STDX_PATH}" ]
+
+[target.x86_64-w64-mingw32.bin-dependencies]
+path-option = [ "${CANGJIE_STDX_PATH}" ]
+
+[target.aarch64-linux-ohos.bin-dependencies]
+  path-option = ["${CANGJIE_STDX_PATH}"]
+[target.x86_64-linux-ohos.bin-dependencies]
+  path-option = ["${CANGJIE_STDX_PATH}"]
