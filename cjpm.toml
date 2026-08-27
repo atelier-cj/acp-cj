@@ -18,7 +18,7 @@
   authors = ["ystyle"]
   repository = "https://atomgit.com/ystyle/acp-cj"
   include = ["src", "LICENSE"]
-  exclude = ["docs", "scripts"]
+  exclude = ["docs", "scripts", "examples"]
 
 
 [package.package-configuration."acp.examples.testclient"]

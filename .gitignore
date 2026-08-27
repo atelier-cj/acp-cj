@@ -6,6 +6,7 @@ target/
 .opencode-data/
 .opencode-state/
 .opencode-cache/
+.opencode-config/
 .e2e/
 .pi-acp-sessions.json
 
