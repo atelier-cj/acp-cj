@@ -1,6 +1,15 @@
+# 构建产物
 target/
 .cache/
+
+# opencode 运行时产物（测试 e2e 生成）
 .opencode-data/
 .opencode-state/
 .opencode-cache/
 .e2e/
+.pi-acp-sessions.json
+
+# 参考资料（可从官方源重新获取，不入库）
+ref-pi-acp/
+docs/raw/
+docs/ref-pi-acp/

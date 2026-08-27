@@ -163,9 +163,8 @@ acp-cj/
 ├── README.md
 ├── docs/
 │   ├── design.md            ← 本文档
-│   ├── raw/                 ← ACP 官方 v1 文档（markdown，已收集）
 │   ├── schema/schema.json   ← 官方 schema（已收集）
-│   └── ref-pi-acp/          ← pi-acp 源码参考（测试/翻译语义对照）
+│   └── protocol-notes.md    ← 协议要点笔记
 └── src/
     ├── root.cj              # package acp 聚合导出
     ├── types/
@@ -490,8 +489,8 @@ cjpm run acp.examples.testclient -- --agent pi-acp
 
 ## 11. 参考资料
 
-- ACP 官方：https://agentclientprotocol.com/protocol/v1/overview（`docs/raw/` 已镜像全部 v1 文档）
+- ACP 官方：https://agentclientprotocol.com/protocol/v1/overview
 - 官方 schema：`docs/schema/schema.json`（GitHub release 最新）
 - pi RPC：https://pi.dev/docs/latest/rpc
-- pi-acp 参考实现：`docs/ref-pi-acp/`（MIT，源码克隆）
+- pi-acp 参考实现：https://github.com/svkozak/pi-acp（MIT，源码）
 - 复用库：`ystyle::jsonrpc` 0.7.2、`jsonvalue`、`sonyflake`（均为本地已有项目）

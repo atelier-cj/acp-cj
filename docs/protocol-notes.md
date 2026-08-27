@@ -1,6 +1,6 @@
 # ACP v1 协议要点笔记
 
-> 摘自 `docs/raw/` 的官方文档与 `docs/schema/schema.json`，供实现参考。
+> 摘自 ACP 官方文档（agentclientprotocol.com）与官方 schema（docs/schema/schema.json），供实现参考。
 
 ## 1. 传输与帧
 

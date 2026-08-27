@@ -171,9 +171,9 @@ cjpm test -j 16 --no-progress   # 32 个单元测试（types 往返 / transport 
 ## 文档
 
 - [设计文档](docs/design.md)
-- [ACP 官方文档镜像](docs/raw/)
+- [ACP 官方文档](https://agentclientprotocol.com/protocol/v1/overview)
 - [官方 schema](docs/schema/schema.json)
-- [pi-acp 参考实现](docs/ref-pi-acp/)
+- [pi-acp 参考实现](https://github.com/svkozak/pi-acp)
 
 ## License
 
