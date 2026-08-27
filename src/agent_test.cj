@@ -473,3 +473,91 @@ public func agent_load_replays_history_then_responds() {
     client.close()
     agent.close()
 }
+
+// ===================== P1: 认证 =====================
+
+@Test
+public func agent_auth_required_gating() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.authRequired = true
+    agent.authMethods.add(AuthMethod())
+    agent.authMethods[0].id = "pi_terminal_login"
+    agent.authMethods[0].name = "Launch pi in the terminal"
+    agent.authMethods[0].`type` = Some("terminal")
+    agent.authMethods[0].args = Some(ArrayList<String>(["--terminal-login"]))
+    agent.start()
+    let client = AcpClient(pair.a())
+    client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())
+
+    // 未认证：session/new 应返回 -32000 auth_required
+    match (client.newSession("/tmp/proj")) {
+        case Result.Ok(_) => @Fail("expected auth_required error")
+        case Result.Err(e) => @Expect(e.contains("-32000"), true)
+    }
+
+    // authenticate 后：session/new 成功
+    match (client.authenticate("pi_terminal_login")) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => @Fail("authenticate failed: ${e}")
+    }
+    match (client.newSession("/tmp/proj")) {
+        case Result.Ok(resp) => @Expect(resp.sessionId.startsWith("sess_"), true)
+        case Result.Err(e) => @Fail("newSession after auth failed: ${e}")
+    }
+    client.close()
+    agent.close()
+}
+
+@Test
+public func agent_logout_clears_auth() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.authRequired = true
+    agent.start()
+    let client = AcpClient(pair.a())
+    client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())
+
+    // 登录
+    match (client.authenticate("m")) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => @Fail("authenticate failed: ${e}")
+    }
+    // 登出
+    match (client.logout()) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => @Fail("logout failed: ${e}")
+    }
+    // 登出后再 session/new 应回到 auth_required
+    match (client.newSession("/tmp/proj")) {
+        case Result.Ok(_) => @Fail("expected auth_required after logout")
+        case Result.Err(e) => @Expect(e.contains("-32000"), true)
+    }
+    client.close()
+    agent.close()
+}
+
+@Test
+public func client_terminal_login_exit_code() {
+    let client = AcpClient(StdioTransport())
+    let method = AuthMethod()
+    method.id = "t"
+    method.name = "test"
+    method.`type` = Some("terminal")
+    method.args = Some(ArrayList<String>(["-c", "exit 3"]))
+    // 不初始化也能用（纯进程辅助）
+    match (client.terminalLogin("sh", method)) {
+        case Result.Ok(code) => @Expect(code, 3)
+        case Result.Err(e) => @Fail("terminalLogin failed: ${e}")
+    }
+    // 成功退出码 0
+    let method2 = AuthMethod()
+    method2.id = "t2"
+    method2.name = "test2"
+    method2.`type` = Some("terminal")
+    method2.args = Some(ArrayList<String>(["-c", "exit 0"]))
+    match (client.terminalLogin("sh", method2)) {
+        case Result.Ok(code) => @Expect(code, 0)
+        case Result.Err(e) => @Fail("terminalLogin failed: ${e}")
+    }
+}

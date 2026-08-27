@@ -94,6 +94,9 @@ public class AcpAgent {
     public var capabilities = AgentCapabilities()
     public var authMethods = ArrayList<AuthMethod>()
     public var protocolVersion: Int64 = ProtocolVersionV1
+    // 认证门控：true 表示 session/new 前必须通过 authenticate（或终端登录）
+    public var authRequired: Bool = false
+    private var authenticated: Bool = false
 
     // 业务钩子
     private var promptHandler: ?PromptHandler = None
@@ -107,6 +110,8 @@ public class AcpAgent {
     private var deleteSessionCb: ?DeleteSessionCallback = None
     private var resumeSessionCb: ?ResumeSessionCallback = None
     private var cancelRequestCb: ?CancelRequestCallback = None
+    private var onAuthenticatedCb: ?CancelRequestCallback = None
+    private var onLoggedOutCb: ?CancelRequestCallback = None
 
     // server 主动 request client 的串行锁（jsonrpc 0.7.2 server.request 单挂起）
     private let clientRequestLock = Mutex()
@@ -132,6 +137,11 @@ public class AcpAgent {
     public func setOnDeleteSession(cb: DeleteSessionCallback): Unit { this.deleteSessionCb = Some(cb) }
     public func setOnResumeSession(cb: ResumeSessionCallback): Unit { this.resumeSessionCb = Some(cb) }
     public func setOnCancelRequest(cb: CancelRequestCallback): Unit { this.cancelRequestCb = Some(cb) }
+    public func setOnAuthenticated(cb: CancelRequestCallback): Unit { this.onAuthenticatedCb = Some(cb) }
+    public func setOnLoggedOut(cb: CancelRequestCallback): Unit { this.onLoggedOutCb = Some(cb) }
+
+    // 是否已认证（未启用门控时恒为 true）
+    public func isAuthenticated(): Bool { !this.authRequired || this.authenticated }
 
     // ===================== 生命周期 =====================
 
@@ -178,6 +188,15 @@ public class AcpAgent {
         }
         if (params.cwd.isEmpty()) {
             return HandlerResult.err(INVALID_PARAMS, "cwd must be an absolute path")
+        }
+        if (!this.isAuthenticated()) {
+            // auth_required：-32000，data 携带 authMethods
+            let data = HashMap<String, JsonValue>()
+            data.add("authMethods", JsonValue.from(ArrayList<JsonValue>()))
+            let arr = ArrayList<JsonValue>()
+            for (m in this.authMethods) { arr.add(JsonValue.fromObject(m)) }
+            data["authMethods"] = JsonValue.Array(arr)
+            return HandlerResult.err(AUTH_REQUIRED, "Authentication required", data: JsonValue.Map(data))
         }
         let sessionId = "sess_" + this.sonyflake.NextID().toString()
         let state = SessionState(sessionId, params.cwd, params.mcpServers)
@@ -413,12 +432,16 @@ public class AcpAgent {
     }
 
     private func handleAuthenticate(ctx: HandlerContext): HandlerResult {
-        // 默认无协议驱动认证；子类可重写
+        // 协议驱动认证：标记已认证（业务侧可在此基础上做真实校验）
+        this.authenticated = true
+        if (let Some(cb) <- this.onAuthenticatedCb) { cb("") }
         HandlerResult.ok(JsonValue.fromObject(EmptyResult()))
     }
 
     private func handleLogout(ctx: HandlerContext): HandlerResult {
-        // 默认无状态；子类可重写
+        // 登出：清除认证状态
+        this.authenticated = false
+        if (let Some(cb) <- this.onLoggedOutCb) { cb("") }
         HandlerResult.ok(JsonValue.fromObject(EmptyResult()))
     }
 

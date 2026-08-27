@@ -3,6 +3,7 @@ package acp
 import jsonvalue.*
 import ystyle::jsonrpc.{JsonRpcClient, Transport, NewlineFraming, RequestId, Notification, Request, Result}
 import std.collection.*
+import std.process.{launch, ProcessRedirect, SubProcess}
 import stdx.encoding.json.stream.*
 import acp.types.*
 import acp.transport.*
@@ -176,6 +177,34 @@ public class AcpClient {
     public func logout(timeout!: Duration = 30 * Duration.second): Result<EmptyResult> {
         if (!this.initialized) { return Result.Err("Client not initialized") }
         this.rpcClient.call<EmptyResult, EmptyResult>("logout", params: EmptyResult(), timeout: timeout)
+    }
+
+    /**
+     * Terminal Auth（协议认证的 terminal 类型）：
+     * 用配置的 agent 程序 + authMethod.args/env 启动一个交互终端（继承当前 stdio），
+     * 等待进程退出；退出码 0 表示登录成功。调用方应随后重连并重新 initialize。
+     *
+     * @param agentCommand agent 可执行程序（与 ACP 连接用的同一命令）
+     * @param method       initialize 返回的 authMethod（type == "terminal"）
+     * @return 进程退出码（0=成功；None=超时）
+     */
+    public func terminalLogin(agentCommand: String, method: AuthMethod, env!: ?HashMap<String, String> = None,
+                              timeout!: Duration = 10 * Duration.minute): Result<Int64> {
+        let args = (method.args ?? ArrayList<String>()).toArray()
+        var proc: SubProcess = try {
+            match (env) {
+                case Some(e) => launch(agentCommand, args, environment: e, stdIn: ProcessRedirect.Inherit, stdOut: ProcessRedirect.Inherit, stdErr: ProcessRedirect.Inherit)
+                case None => launch(agentCommand, args, stdIn: ProcessRedirect.Inherit, stdOut: ProcessRedirect.Inherit, stdErr: ProcessRedirect.Inherit)
+            }
+        } catch (e: Exception) {
+            return Result.Err("terminal auth launch failed: ${e.message}")
+        }
+        let code = try {
+            proc.wait(timeout: Some(timeout))
+        } catch (e: Exception) {
+            return Result.Err("terminal auth timeout")
+        }
+        Result.Ok(code)
     }
 
     // ===================== 回调注册 =====================
