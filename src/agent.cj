@@ -1,0 +1,319 @@
+package acp
+
+import jsonvalue.*
+import ystyle::jsonrpc.{JsonRpcServer, Transport, NewlineFraming, HandlerContext, HandlerResult, Result, JsonRpcError}
+import std.collection.*
+import std.sync.*
+import stdx.encoding.json.stream.*
+import sonyflake.*
+import std.random.Random
+import acp.types.*
+import acp.transport.*
+
+// ===================== 回调类型 =====================
+
+public type NewSessionCallback = (String /*cwd*/) -> Unit
+public type CancelCallback = (String /*sessionId*/) -> Unit
+public type CloseCallback = (String /*sessionId*/) -> Unit
+public type ListSessionsCallback = (ListSessionsRequest) -> ListSessionsResponse
+
+/**
+ * PromptContext：一次 prompt 回合的执行上下文。
+ * 处理器通过 emit 推送 session/update 通知，通过 isCancelled 检测取消。
+ */
+public class PromptContext {
+    public let sessionId: String
+    public let prompt: ArrayList<ContentBlock>
+    public let cwd: String
+    private let emitFn: (SessionUpdate) -> Unit
+    private let cancelFlag: AtomicBool
+
+    public init(sessionId: String, cwd: String, prompt: ArrayList<ContentBlock>,
+                emitFn: (SessionUpdate) -> Unit, cancelFlag: AtomicBool) {
+        this.sessionId = sessionId
+        this.cwd = cwd
+        this.prompt = prompt
+        this.emitFn = emitFn
+        this.cancelFlag = cancelFlag
+    }
+
+    public func emit(update: SessionUpdate): Unit { this.emitFn(update) }
+    public func isCancelled(): Bool { this.cancelFlag.load() }
+    public func getText(): String {
+        var out = ""
+        for (b in this.prompt) {
+            match (b.text) {
+                case Some(t) => out += t
+                case None => ()
+            }
+        }
+        out
+    }
+}
+
+public type PromptHandler = (PromptContext) -> PromptResponse
+
+// ===================== 会话状态 =====================
+
+public class SessionState {
+    public let sessionId: String
+    public let cwd: String
+    public let mcpServers: ArrayList<McpServer>
+    public let cancelFlag = AtomicBool(false)
+    // 同一会话同一时刻只允许一个进行中的回合
+    public let promptLock = Mutex()
+
+    public init(sessionId: String, cwd: String, mcpServers: ArrayList<McpServer>) {
+        this.sessionId = sessionId
+        this.cwd = cwd
+        this.mcpServers = mcpServers
+    }
+}
+
+/**
+ * AcpAgent：ACP Agent（服务端）框架。
+ * 基于 JsonRpcServer 实现双工 JSON-RPC：处理 Client 的方法请求，同时可
+ * 主动推送 session/update 通知、反向调用 Client 的 terminal/fs/permission 方法。
+ */
+public class AcpAgent {
+    private let rpcServer: JsonRpcServer
+    private let sessions = HashMap<String, SessionState>()
+    private let sessionLock = Mutex()
+    private let sonyflake = Sonyflake(Setting(Random().nextUInt16()))
+
+    // 声明信息
+    public var agentInfo: Implementation
+    public var capabilities = AgentCapabilities()
+    public var authMethods = ArrayList<AuthMethod>()
+    public var protocolVersion: Int64 = ProtocolVersionV1
+
+    // 业务钩子
+    private var promptHandler: ?PromptHandler = None
+    private var onNewSessionCb: ?NewSessionCallback = None
+    private var onCancelCb: ?CancelCallback = None
+    private var onCloseCb: ?CloseCallback = None
+    private var listSessionsCb: ?ListSessionsCallback = None
+
+    // server 主动 request client 的串行锁（jsonrpc 0.7.2 server.request 单挂起）
+    private let clientRequestLock = Mutex()
+
+    public init(transport: Transport, name: String, version: String) {
+        this.agentInfo = Implementation(name, version)
+        this.rpcServer = JsonRpcServer(transport, framing: NewlineFraming())
+        this.registerHandlers()
+    }
+
+    // ===================== 钩子 =====================
+
+    public func setPromptHandler(handler: PromptHandler): Unit { this.promptHandler = Some(handler) }
+    public func setOnNewSession(cb: NewSessionCallback): Unit { this.onNewSessionCb = Some(cb) }
+    public func setOnCancel(cb: CancelCallback): Unit { this.onCancelCb = Some(cb) }
+    public func setOnClose(cb: CloseCallback): Unit { this.onCloseCb = Some(cb) }
+    public func setOnListSessions(cb: ListSessionsCallback): Unit { this.listSessionsCb = Some(cb) }
+
+    // ===================== 生命周期 =====================
+
+    public func start(): Unit { this.rpcServer.start() }
+    public func serve(): Unit { this.rpcServer.serve() }
+    public func close(): Unit { this.rpcServer.close() }
+
+    // ===================== 内置方法注册 =====================
+
+    private func registerHandlers() {
+        this.rpcServer.register("initialize", { ctx => this.handleInitialize(ctx) })
+        this.rpcServer.register("session/new", { ctx => this.handleNewSession(ctx) })
+        this.rpcServer.registerAsyncErr("session/prompt", { ctx, complete, fail => this.handlePromptAsync(ctx, complete, fail) })
+        this.rpcServer.register("session/cancel", { ctx => this.handleCancel(ctx) })
+        this.rpcServer.register("session/close", { ctx => this.handleClose(ctx) })
+        this.rpcServer.register("session/list", { ctx => this.handleListSessions(ctx) })
+        this.rpcServer.register("authenticate", { ctx => this.handleAuthenticate(ctx) })
+        this.rpcServer.register("logout", { ctx => this.handleLogout(ctx) })
+    }
+
+    // ===================== 处理方法 =====================
+
+    private func handleInitialize(ctx: HandlerContext): HandlerResult {
+        let params = ctx.getParams<InitializeRequest>()
+        let requested = params?.protocolVersion ?? ProtocolVersionV1
+        let resp = InitializeResponse()
+        resp.protocolVersion = if (requested == this.protocolVersion) { requested } else { this.protocolVersion }
+        resp.agentInfo = Some(this.agentInfo)
+        resp.agentCapabilities = this.capabilities
+        resp.authMethods = this.authMethods
+        HandlerResult.ok(JsonValue.fromObject(resp))
+    }
+
+    private func handleNewSession(ctx: HandlerContext): HandlerResult {
+        let params = match (ctx.getParams<NewSessionRequest>()) {
+            case Some(p) => p
+            case None => return HandlerResult.err(INVALID_PARAMS, "Invalid session/new params")
+        }
+        if (params.cwd.isEmpty()) {
+            return HandlerResult.err(INVALID_PARAMS, "cwd must be an absolute path")
+        }
+        let sessionId = "sess_" + this.sonyflake.NextID().toString()
+        let state = SessionState(sessionId, params.cwd, params.mcpServers)
+        synchronized(this.sessionLock) {
+            this.sessions.add(sessionId, state)
+        }
+        if (let Some(cb) <- this.onNewSessionCb) { cb(params.cwd) }
+        let resp = NewSessionResponse()
+        resp.sessionId = sessionId
+        HandlerResult.ok(JsonValue.fromObject(resp))
+    }
+
+    private func handlePromptAsync(ctx: HandlerContext, complete: (JsonValue) -> Unit, fail: (JsonRpcError) -> Unit): Unit {
+        spawn {
+            => this.doPrompt(ctx, complete, fail)
+        }
+    }
+
+    private func doPrompt(ctx: HandlerContext, complete: (JsonValue) -> Unit, fail: (JsonRpcError) -> Unit): Unit {
+        let params = match (ctx.getParams<PromptRequest>()) {
+            case Some(p) => p
+            case None =>
+                fail(JsonRpcError(INVALID_PARAMS, "Invalid prompt params"))
+                return
+        }
+        let state = synchronized(this.sessionLock) { this.sessions.get(params.sessionId) }
+        if (state.isNone()) {
+            fail(JsonRpcError(INVALID_PARAMS, "Unknown sessionId: ${params.sessionId}"))
+            return
+        }
+        let s = state.getOrThrow()
+        let handler = match (this.promptHandler) {
+            case Some(h) => h
+            case None =>
+                fail(JsonRpcError(INTERNAL_ERROR, "No prompt handler registered"))
+                return
+        }
+        // 串行执行：同一会话一次只处理一个回合
+        synchronized(s.promptLock) {
+            if (s.cancelFlag.load()) { s.cancelFlag.store(false) }
+            let pc = PromptContext(s.sessionId, s.cwd, params.prompt, { u => this.sessionUpdate(s.sessionId, u) }, s.cancelFlag)
+            let resp = handler(pc)
+            // 若回合结束时取消标志仍为真，且处理器返回 end_turn，统一转为 cancelled
+            let finalResp = if (s.cancelFlag.load() && resp.stopReason == StopReasonEndTurn) {
+                PromptResponse(StopReasonCancelled)
+            } else {
+                resp
+            }
+            s.cancelFlag.store(false)
+            complete(JsonValue.fromObject(finalResp))
+        }
+    }
+
+    private func handleCancel(ctx: HandlerContext): HandlerResult {
+        let params = ctx.getParams<CancelNotification>()
+        let sessionId = params?.sessionId ?? ""
+        if (let Some(s) <- synchronized(this.sessionLock) { this.sessions.get(sessionId) }) {
+            s.cancelFlag.store(true)
+            if (let Some(cb) <- this.onCancelCb) { cb(sessionId) }
+        }
+        // session/cancel 是通知，不返回响应
+        HandlerResult.ok(JsonValue.Null)
+    }
+
+    private func handleClose(ctx: HandlerContext): HandlerResult {
+        let params = ctx.getParams<CloseSessionRequest>()
+        let sessionId = params?.sessionId ?? ""
+        let removed = synchronized(this.sessionLock) {
+            let s = this.sessions.get(sessionId)
+            this.sessions.remove(sessionId)
+            s
+        }
+        match (removed) {
+            case Some(s) =>
+                s.cancelFlag.store(true)
+                if (let Some(cb) <- this.onCloseCb) { cb(sessionId) }
+                HandlerResult.ok(JsonValue.fromObject(EmptyResult()))
+            case None => HandlerResult.err(INVALID_PARAMS, "Unknown sessionId: ${sessionId}")
+        }
+    }
+
+    private func handleListSessions(ctx: HandlerContext): HandlerResult {
+        let params = ctx.getParams<ListSessionsRequest>()
+        match (this.listSessionsCb) {
+            case Some(cb) =>
+                let resp = cb(params ?? ListSessionsRequest())
+                HandlerResult.ok(JsonValue.fromObject(resp))
+            case None => HandlerResult.err(METHOD_NOT_FOUND, "session/list not supported")
+        }
+    }
+
+    private func handleAuthenticate(ctx: HandlerContext): HandlerResult {
+        // 默认无协议驱动认证；子类可重写
+        HandlerResult.ok(JsonValue.fromObject(EmptyResult()))
+    }
+
+    private func handleLogout(ctx: HandlerContext): HandlerResult {
+        // 默认无状态；子类可重写
+        HandlerResult.ok(JsonValue.fromObject(EmptyResult()))
+    }
+
+    // ===================== 主动推送（Agent → Client 通知） =====================
+
+    public func sessionUpdate(sessionId: String, update: SessionUpdate): Unit {
+        let notif = SessionNotification()
+        notif.sessionId = sessionId
+        notif.update = update
+        this.rpcServer.notify<SessionNotification>("session/update", params: notif)
+    }
+
+    // ===================== 反向调用（Agent → Client 请求） =====================
+
+    public func requestPermission(sessionId: String, toolCall: ToolCallUpdate,
+                                  options: ArrayList<PermissionOption>,
+                                  timeout!: Duration = 30 * Duration.second): Result<RequestPermissionResponse> {
+        let req = RequestPermissionRequest()
+        req.sessionId = sessionId
+        req.toolCall = toolCall
+        req.options = options
+        synchronized(this.clientRequestLock) {
+            this.rpcServer.request<RequestPermissionRequest, RequestPermissionResponse>(
+                "session/request_permission", params: req, timeout: timeout)
+        }
+    }
+
+    public func createTerminal(req: CreateTerminalRequest, timeout!: Duration = 30 * Duration.second): Result<CreateTerminalResponse> {
+        synchronized(this.clientRequestLock) {
+            this.rpcServer.request<CreateTerminalRequest, CreateTerminalResponse>("terminal/create", params: req, timeout: timeout)
+        }
+    }
+
+    public func terminalOutput(req: TerminalOutputRequest, timeout!: Duration = 30 * Duration.second): Result<TerminalOutputResponse> {
+        synchronized(this.clientRequestLock) {
+            this.rpcServer.request<TerminalIdRequest, TerminalOutputResponse>("terminal/output", params: req, timeout: timeout)
+        }
+    }
+
+    public func terminalWaitForExit(req: WaitForTerminalExitRequest, timeout!: Duration = 10 * Duration.minute): Result<WaitForTerminalExitResponse> {
+        synchronized(this.clientRequestLock) {
+            this.rpcServer.request<TerminalIdRequest, WaitForTerminalExitResponse>("terminal/wait_for_exit", params: req, timeout: timeout)
+        }
+    }
+
+    public func terminalKill(req: KillTerminalRequest, timeout!: Duration = 30 * Duration.second): Result<EmptyResult> {
+        synchronized(this.clientRequestLock) {
+            this.rpcServer.request<TerminalIdRequest, EmptyResult>("terminal/kill", params: req, timeout: timeout)
+        }
+    }
+
+    public func terminalRelease(req: ReleaseTerminalRequest, timeout!: Duration = 30 * Duration.second): Result<EmptyResult> {
+        synchronized(this.clientRequestLock) {
+            this.rpcServer.request<TerminalIdRequest, EmptyResult>("terminal/release", params: req, timeout: timeout)
+        }
+    }
+
+    public func readTextFile(req: ReadTextFileRequest, timeout!: Duration = 30 * Duration.second): Result<ReadTextFileResponse> {
+        synchronized(this.clientRequestLock) {
+            this.rpcServer.request<ReadTextFileRequest, ReadTextFileResponse>("fs/read_text_file", params: req, timeout: timeout)
+        }
+    }
+
+    public func writeTextFile(req: WriteTextFileRequest, timeout!: Duration = 30 * Duration.second): Result<EmptyResult> {
+        synchronized(this.clientRequestLock) {
+            this.rpcServer.request<WriteTextFileRequest, EmptyResult>("fs/write_text_file", params: req, timeout: timeout)
+        }
+    }
+}
