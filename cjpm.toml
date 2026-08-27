@@ -18,17 +18,6 @@
   authors = ["ystyle"]
   repository = "https://atomgit.com/ystyle/acp-cj"
 
-[package.package-configuration."acp.examples.echo_agent"]
-output-type = "executable"
-compile-option = "--static"
-
-[package.package-configuration."acp.examples.testclient"]
-output-type = "executable"
-compile-option = "--static"
-
-[package.package-configuration."acp.examples.pi_bridge"]
-output-type = "executable"
-compile-option = "--static"
 
 [target.x86_64-unknown-linux-gnu.bin-dependencies]
 path-option = [ "${CANGJIE_STDX_PATH}" ]
