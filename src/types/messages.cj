@@ -414,6 +414,7 @@ public class ListSessionsResponse <: JsonSerializable & JsonDeserializable<ListS
 public class DeleteSessionRequest <: JsonSerializable & JsonDeserializable<DeleteSessionRequest> {
     public var sessionId: String = ""
     public init() {}
+    public init(sessionId: String) { this.sessionId = sessionId }
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
         w.writeName("sessionId").writeValue(this.sessionId)
@@ -431,6 +432,7 @@ public class DeleteSessionRequest <: JsonSerializable & JsonDeserializable<Delet
 public class CloseSessionRequest <: JsonSerializable & JsonDeserializable<CloseSessionRequest> {
     public var sessionId: String = ""
     public init() {}
+    public init(sessionId: String) { this.sessionId = sessionId }
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
         w.writeName("sessionId").writeValue(this.sessionId)
