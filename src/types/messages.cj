@@ -246,12 +246,10 @@ public class NewSessionRequest <: JsonSerializable & JsonDeserializable<NewSessi
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
         w.writeName("cwd").writeValue(this.cwd)
-        if (this.mcpServers.size > 0) {
-            w.writeName("mcpServers")
-            w.startArray()
-            for (item in this.mcpServers) { item.toJson(w) }
-            w.endArray()
-        }
+        w.writeName("mcpServers")
+        w.startArray()
+        for (item in this.mcpServers) { item.toJson(w) }
+        w.endArray()
         if (let Some(v) <- this.additionalDirectories) {
             w.writeName("additionalDirectories")
             w.startArray()

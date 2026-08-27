@@ -19,6 +19,10 @@
   repository = "https://atomgit.com/ystyle/acp-cj"
 
 
+[package.package-configuration."acp.examples.testclient"]
+output-type = "executable"
+compile-option = "--static"
+
 [target.x86_64-unknown-linux-gnu.bin-dependencies]
 path-option = [ "${CANGJIE_STDX_PATH}" ]
 
@@ -29,3 +33,5 @@ path-option = [ "${CANGJIE_STDX_PATH}" ]
   path-option = ["${CANGJIE_STDX_PATH}"]
 [target.x86_64-linux-ohos.bin-dependencies]
   path-option = ["${CANGJIE_STDX_PATH}"]
+
+
