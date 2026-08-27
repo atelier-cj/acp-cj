@@ -25,12 +25,17 @@ public class StdioTransport <: Transport {
     }
 
     public func receive(): ?Array<Byte> {
-        let chunk = Array<Byte>(8192, repeat: 0)
-        let n = getStdIn().read(chunk)
-        if (n <= 0) {
-            return None
+        // 注意：仓颉 getStdIn().read(chunk) 在管道模式下会缓冲直到 EOF 才返回，
+        // 不适合交互式 ACP。改用 readln（按行读），正好匹配 ACP 的换行帧分隔。
+        if (let Some(line) <- getStdIn().readln()) {
+            let chars = line.toArray()
+            let bytes = Array<Byte>(chars.size + 1, repeat: 0)
+            for (i in 0..chars.size) { bytes[i] = chars[i] }
+            bytes[chars.size] = 10
+            Some(bytes)
+        } else {
+            None
         }
-        Some(chunk[0..n])
     }
 
     public func isClosed(): Bool { !this.running }
