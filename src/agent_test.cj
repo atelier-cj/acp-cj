@@ -177,3 +177,145 @@ public func agent_request_permission_roundtrip() {
     client.close()
     agent.close()
 }
+
+// ===================== 可选方法测试 =====================
+
+@Test
+public func agent_set_mode_and_config_option() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    // set_mode 钩子：接受 "code" 和 "ask"
+    agent.setOnSetMode({ sid, modeId =>
+        modeId == "code" || modeId == "ask"
+    })
+    // set_config_option 钩子：只接受 "model"
+    agent.setOnSetConfigOption({ sid, req =>
+        if (req.configId == "model") {
+            let opt = SessionConfigOption("model", "Model")
+            opt.`type` = "select"
+            opt.currentValue = req.value
+            Some(ArrayList<SessionConfigOption>([opt]))
+        } else {
+            None
+        }
+    })
+    agent.start()
+    let client = AcpClient(pair.a())
+    client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())
+    let sessionId = match (client.newSession("/tmp/proj")) {
+        case Result.Ok(resp) => resp.sessionId
+        case Result.Err(e) => return @Fail("newSession failed: ${e}")
+    }
+
+    // set_mode 成功
+    match (client.setMode(sessionId, "code")) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => @Fail("setMode failed: ${e}")
+    }
+    // set_mode 失败（未知 mode）
+    match (client.setMode(sessionId, "bogus")) {
+        case Result.Ok(_) => @Fail("expected setMode error")
+        case Result.Err(_) => ()
+    }
+    // set_config_option 成功
+    match (client.setConfigOption(sessionId, "model", "model-2")) {
+        case Result.Ok(resp) => @Expect(resp.configOptions.size, 1)
+        case Result.Err(e) => @Fail("setConfigOption failed: ${e}")
+    }
+    // set_config_option 失败（未知 configId）
+    match (client.setConfigOption(sessionId, "bogus", "x")) {
+        case Result.Ok(_) => @Fail("expected setConfigOption error")
+        case Result.Err(_) => ()
+    }
+    client.close()
+    agent.close()
+}
+
+@Test
+public func agent_load_and_delete_session() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.setOnLoadSession({ req =>
+        if (req.sessionId == "sess_existing") {
+            let resp = LoadSessionResponse()
+            Some(resp)
+        } else {
+            None
+        }
+    })
+    agent.setOnDeleteSession({ sid => sid == "sess_existing" })
+    agent.start()
+    let client = AcpClient(pair.a())
+    client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())
+
+    // load 成功
+    match (client.loadSession("sess_existing", "/tmp")) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => @Fail("loadSession failed: ${e}")
+    }
+    // load 失败
+    match (client.loadSession("sess_missing", "/tmp")) {
+        case Result.Ok(_) => @Fail("expected loadSession error")
+        case Result.Err(_) => ()
+    }
+    // delete 成功
+    match (client.deleteSession("sess_existing")) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => @Fail("deleteSession failed: ${e}")
+    }
+    // delete 失败
+    match (client.deleteSession("sess_missing")) {
+        case Result.Ok(_) => @Fail("expected deleteSession error")
+        case Result.Err(_) => ()
+    }
+    // close 成功（有该会话）
+    let sessionId = match (client.newSession("/tmp/proj")) {
+        case Result.Ok(resp) => resp.sessionId
+        case Result.Err(e) => return @Fail("newSession failed: ${e}")
+    }
+    match (client.closeSession(sessionId)) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => @Fail("closeSession failed: ${e}")
+    }
+    client.close()
+    agent.close()
+}
+
+@Test
+public func agent_usage_update_notification() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.setPromptHandler({ ctx =>
+        let cost = Cost()
+        cost.amount = 0.05
+        cost.currency = "USD"
+        ctx.emit(SessionUpdate.usageUpdate(53000, 200000, cost: Some(cost)))
+        PromptResponse(StopReasonEndTurn)
+    })
+    agent.start()
+    let client = AcpClient(pair.a())
+    let usage = ArrayList<String>()
+    client.setOnSessionUpdate({ sid, update =>
+        if (update.sessionUpdate == SessionUpdateUsage) {
+            usage.add("${update.used ?? 0}/${update.size ?? 0}")
+        }
+    })
+    client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())
+    let sessionId = match (client.newSession("/tmp/proj")) {
+        case Result.Ok(resp) => resp.sessionId
+        case Result.Err(e) => return @Fail("newSession failed: ${e}")
+    }
+    match (client.promptText(sessionId, "hi")) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => @Fail("prompt failed: ${e}")
+    }
+    var tries: Int64 = 0
+    while (usage.size == 0 && tries < 100) {
+        tries++
+        sleep(10 * Duration.millisecond)
+    }
+    @Expect(usage.size, 1)
+    @Expect(usage[0], "53000/200000")
+    client.close()
+    agent.close()
+}

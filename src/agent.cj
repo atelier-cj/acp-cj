@@ -16,6 +16,10 @@ public type NewSessionCallback = (String /*cwd*/) -> Unit
 public type CancelCallback = (String /*sessionId*/) -> Unit
 public type CloseCallback = (String /*sessionId*/) -> Unit
 public type ListSessionsCallback = (ListSessionsRequest) -> ListSessionsResponse
+public type SetModeCallback = (String /*sessionId*/, String /*modeId*/) -> Bool
+public type SetConfigOptionCallback = (String /*sessionId*/, SetSessionConfigOptionRequest) -> ?ArrayList<SessionConfigOption>
+public type LoadSessionCallback = (SessionLifecycleRequest) -> ?LoadSessionResponse
+public type DeleteSessionCallback = (String /*sessionId*/) -> Bool
 
 /**
  * PromptContext：一次 prompt 回合的执行上下文。
@@ -93,6 +97,10 @@ public class AcpAgent {
     private var onCancelCb: ?CancelCallback = None
     private var onCloseCb: ?CloseCallback = None
     private var listSessionsCb: ?ListSessionsCallback = None
+    private var setModeCb: ?SetModeCallback = None
+    private var setConfigOptionCb: ?SetConfigOptionCallback = None
+    private var loadSessionCb: ?LoadSessionCallback = None
+    private var deleteSessionCb: ?DeleteSessionCallback = None
 
     // server 主动 request client 的串行锁（jsonrpc 0.7.2 server.request 单挂起）
     private let clientRequestLock = Mutex()
@@ -110,6 +118,10 @@ public class AcpAgent {
     public func setOnCancel(cb: CancelCallback): Unit { this.onCancelCb = Some(cb) }
     public func setOnClose(cb: CloseCallback): Unit { this.onCloseCb = Some(cb) }
     public func setOnListSessions(cb: ListSessionsCallback): Unit { this.listSessionsCb = Some(cb) }
+    public func setOnSetMode(cb: SetModeCallback): Unit { this.setModeCb = Some(cb) }
+    public func setOnSetConfigOption(cb: SetConfigOptionCallback): Unit { this.setConfigOptionCb = Some(cb) }
+    public func setOnLoadSession(cb: LoadSessionCallback): Unit { this.loadSessionCb = Some(cb) }
+    public func setOnDeleteSession(cb: DeleteSessionCallback): Unit { this.deleteSessionCb = Some(cb) }
 
     // ===================== 生命周期 =====================
 
@@ -126,6 +138,10 @@ public class AcpAgent {
         this.rpcServer.register("session/cancel", { ctx => this.handleCancel(ctx) })
         this.rpcServer.register("session/close", { ctx => this.handleClose(ctx) })
         this.rpcServer.register("session/list", { ctx => this.handleListSessions(ctx) })
+        this.rpcServer.register("session/set_mode", { ctx => this.handleSetMode(ctx) })
+        this.rpcServer.register("session/set_config_option", { ctx => this.handleSetConfigOption(ctx) })
+        this.rpcServer.register("session/load", { ctx => this.handleLoadSession(ctx) })
+        this.rpcServer.register("session/delete", { ctx => this.handleDeleteSession(ctx) })
         this.rpcServer.register("authenticate", { ctx => this.handleAuthenticate(ctx) })
         this.rpcServer.register("logout", { ctx => this.handleLogout(ctx) })
     }
@@ -238,6 +254,69 @@ public class AcpAgent {
                 let resp = cb(params ?? ListSessionsRequest())
                 HandlerResult.ok(JsonValue.fromObject(resp))
             case None => HandlerResult.err(METHOD_NOT_FOUND, "session/list not supported")
+        }
+    }
+
+    private func handleSetMode(ctx: HandlerContext): HandlerResult {
+        let params = ctx.getParams<SetSessionModeRequest>()
+        let sessionId = params?.sessionId ?? ""
+        let modeId = params?.modeId ?? ""
+        if (synchronized(this.sessionLock) { this.sessions.get(sessionId) }.isNone()) {
+            return HandlerResult.err(INVALID_PARAMS, "Unknown sessionId: ${sessionId}")
+        }
+        match (this.setModeCb) {
+            case Some(cb) =>
+                if (cb(sessionId, modeId)) {
+                    HandlerResult.ok(JsonValue.fromObject(EmptyResult()))
+                } else {
+                    HandlerResult.err(INVALID_PARAMS, "Unknown modeId: ${modeId}")
+                }
+            case None => HandlerResult.err(METHOD_NOT_FOUND, "session/set_mode not supported")
+        }
+    }
+
+    private func handleSetConfigOption(ctx: HandlerContext): HandlerResult {
+        let params = ctx.getParams<SetSessionConfigOptionRequest>()
+        let sessionId = params?.sessionId ?? ""
+        if (synchronized(this.sessionLock) { this.sessions.get(sessionId) }.isNone()) {
+            return HandlerResult.err(INVALID_PARAMS, "Unknown sessionId: ${sessionId}")
+        }
+        match (this.setConfigOptionCb) {
+            case Some(cb) =>
+                match (cb(sessionId, params ?? SetSessionConfigOptionRequest())) {
+                    case Some(options) =>
+                        let resp = SetSessionConfigOptionResponse()
+                        resp.configOptions = options
+                        HandlerResult.ok(JsonValue.fromObject(resp))
+                    case None => HandlerResult.err(INVALID_PARAMS, "Unknown configId")
+                }
+            case None => HandlerResult.err(METHOD_NOT_FOUND, "session/set_config_option not supported")
+        }
+    }
+
+    private func handleLoadSession(ctx: HandlerContext): HandlerResult {
+        let params = ctx.getParams<SessionLifecycleRequest>()
+        match (this.loadSessionCb) {
+            case Some(cb) =>
+                match (cb(params ?? SessionLifecycleRequest())) {
+                    case Some(resp) => HandlerResult.ok(JsonValue.fromObject(resp))
+                    case None => HandlerResult.err(INVALID_PARAMS, "Unknown sessionId")
+                }
+            case None => HandlerResult.err(METHOD_NOT_FOUND, "session/load not supported")
+        }
+    }
+
+    private func handleDeleteSession(ctx: HandlerContext): HandlerResult {
+        let params = ctx.getParams<DeleteSessionRequest>()
+        let sessionId = params?.sessionId ?? ""
+        match (this.deleteSessionCb) {
+            case Some(cb) =>
+                if (cb(sessionId)) {
+                    HandlerResult.ok(JsonValue.fromObject(EmptyResult()))
+                } else {
+                    HandlerResult.err(RESOURCE_NOT_FOUND, "Unknown sessionId: ${sessionId}")
+                }
+            case None => HandlerResult.err(METHOD_NOT_FOUND, "session/delete not supported")
         }
     }
 
