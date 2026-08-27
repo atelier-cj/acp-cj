@@ -12,13 +12,15 @@ import acp.transport.*
 
 // ===================== 回调类型 =====================
 
-public type NewSessionCallback = (String /*cwd*/) -> Unit
+public type NewSessionCallback = (String /*sessionId*/, String /*cwd*/) -> Unit
 public type CancelCallback = (String /*sessionId*/) -> Unit
 public type CloseCallback = (String /*sessionId*/) -> Unit
 public type ListSessionsCallback = (ListSessionsRequest) -> ListSessionsResponse
 public type SetModeCallback = (String /*sessionId*/, String /*modeId*/) -> Bool
 public type SetConfigOptionCallback = (String /*sessionId*/, SetSessionConfigOptionRequest) -> ?ArrayList<SessionConfigOption>
-public type LoadSessionCallback = (SessionLifecycleRequest) -> ?LoadSessionResponse
+// 异步会话加载：业务层负责重放历史（agent.sessionUpdate），完成后 complete(resp)，
+// 失败 fail(err)。重放通知必须全部发出后，才调用 complete 响应 session/load 请求。
+public type LoadSessionHandler = (SessionLifecycleRequest, (JsonValue) -> Unit /*complete*/, (JsonRpcError) -> Unit /*fail*/) -> Unit
 public type DeleteSessionCallback = (String /*sessionId*/) -> Bool
 public type ResumeSessionCallback = (SessionLifecycleRequest) -> ?ResumeSessionResponse
 public type CancelRequestCallback = (String /*requestId 字符串化*/) -> Unit
@@ -101,7 +103,7 @@ public class AcpAgent {
     private var listSessionsCb: ?ListSessionsCallback = None
     private var setModeCb: ?SetModeCallback = None
     private var setConfigOptionCb: ?SetConfigOptionCallback = None
-    private var loadSessionCb: ?LoadSessionCallback = None
+    private var loadSessionCb: ?LoadSessionHandler = None
     private var deleteSessionCb: ?DeleteSessionCallback = None
     private var resumeSessionCb: ?ResumeSessionCallback = None
     private var cancelRequestCb: ?CancelRequestCallback = None
@@ -126,7 +128,7 @@ public class AcpAgent {
     public func setOnListSessions(cb: ListSessionsCallback): Unit { this.listSessionsCb = Some(cb) }
     public func setOnSetMode(cb: SetModeCallback): Unit { this.setModeCb = Some(cb) }
     public func setOnSetConfigOption(cb: SetConfigOptionCallback): Unit { this.setConfigOptionCb = Some(cb) }
-    public func setOnLoadSession(cb: LoadSessionCallback): Unit { this.loadSessionCb = Some(cb) }
+    public func setOnLoadSession(cb: LoadSessionHandler): Unit { this.loadSessionCb = Some(cb) }
     public func setOnDeleteSession(cb: DeleteSessionCallback): Unit { this.deleteSessionCb = Some(cb) }
     public func setOnResumeSession(cb: ResumeSessionCallback): Unit { this.resumeSessionCb = Some(cb) }
     public func setOnCancelRequest(cb: CancelRequestCallback): Unit { this.cancelRequestCb = Some(cb) }
@@ -148,7 +150,7 @@ public class AcpAgent {
         this.rpcServer.register("session/list", { ctx => this.handleListSessions(ctx) })
         this.rpcServer.register("session/set_mode", { ctx => this.handleSetMode(ctx) })
         this.rpcServer.register("session/set_config_option", { ctx => this.handleSetConfigOption(ctx) })
-        this.rpcServer.register("session/load", { ctx => this.handleLoadSession(ctx) })
+        this.rpcServer.registerAsyncErr("session/load", { ctx, complete, fail => this.handleLoadSessionAsync(ctx, complete, fail) })
         this.rpcServer.register("session/resume", { ctx => this.handleResumeSession(ctx) })
         this.rpcServer.register("$/cancel_request", { ctx => this.handleCancelRequest(ctx) })
         this.rpcServer.register("session/delete", { ctx => this.handleDeleteSession(ctx) })
@@ -182,7 +184,7 @@ public class AcpAgent {
         synchronized(this.sessionLock) {
             this.sessions.add(sessionId, state)
         }
-        if (let Some(cb) <- this.onNewSessionCb) { cb(params.cwd) }
+        if (let Some(cb) <- this.onNewSessionCb) { cb(sessionId, params.cwd) }
         let resp = NewSessionResponse()
         resp.sessionId = sessionId
         HandlerResult.ok(JsonValue.fromObject(resp))
@@ -331,15 +333,33 @@ public class AcpAgent {
         }
     }
 
-    private func handleLoadSession(ctx: HandlerContext): HandlerResult {
-        let params = ctx.getParams<SessionLifecycleRequest>()
+    private func handleLoadSessionAsync(ctx: HandlerContext, complete: (JsonValue) -> Unit, fail: (JsonRpcError) -> Unit): Unit {
+        spawn {
+            => this.doLoadSession(ctx, complete, fail)
+        }
+    }
+
+    private func doLoadSession(ctx: HandlerContext, complete: (JsonValue) -> Unit, fail: (JsonRpcError) -> Unit): Unit {
+        let params = match (ctx.getParams<SessionLifecycleRequest>()) {
+            case Some(p) => p
+            case None =>
+                fail(JsonRpcError(INVALID_PARAMS, "Invalid session/load params"))
+                return
+        }
         match (this.loadSessionCb) {
             case Some(cb) =>
-                match (cb(params ?? SessionLifecycleRequest())) {
-                    case Some(resp) => HandlerResult.ok(JsonValue.fromObject(resp))
-                    case None => HandlerResult.err(INVALID_PARAMS, "Unknown sessionId")
-                }
-            case None => HandlerResult.err(METHOD_NOT_FOUND, "session/load not supported")
+                cb(params,
+                    { result =>
+                        // 加载成功后，把会话恢复到会话表（供后续 session/prompt 使用）
+                        synchronized(this.sessionLock) {
+                            if (!this.sessions.contains(params.sessionId)) {
+                                this.sessions.add(params.sessionId, SessionState(params.sessionId, params.cwd, params.mcpServers))
+                            }
+                        }
+                        complete(result)
+                    },
+                    { err => fail(err) })
+            case None => fail(JsonRpcError(METHOD_NOT_FOUND, "session/load not supported"))
         }
     }
 

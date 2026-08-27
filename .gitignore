@@ -1,2 +1,6 @@
 target/
 .cache/
+.opencode-data/
+.opencode-state/
+.opencode-cache/
+.e2e/

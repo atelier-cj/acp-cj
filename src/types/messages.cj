@@ -311,12 +311,10 @@ public class SessionLifecycleRequest <: JsonSerializable & JsonDeserializable<Se
         w.startObject()
         w.writeName("sessionId").writeValue(this.sessionId)
         w.writeName("cwd").writeValue(this.cwd)
-        if (this.mcpServers.size > 0) {
-            w.writeName("mcpServers")
-            w.startArray()
-            for (item in this.mcpServers) { item.toJson(w) }
-            w.endArray()
-        }
+        w.writeName("mcpServers")
+        w.startArray()
+        for (item in this.mcpServers) { item.toJson(w) }
+        w.endArray()
         if (let Some(v) <- this.additionalDirectories) {
             w.writeName("additionalDirectories")
             w.startArray()

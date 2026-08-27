@@ -3,7 +3,7 @@ package acp
 import acp.types.*
 import acp.transport.*
 import jsonvalue.*
-import ystyle::jsonrpc.{Result}
+import ystyle::jsonrpc.{Result, JsonRpcError}
 import std.collection.*
 import std.sync.*
 
@@ -235,12 +235,11 @@ public func agent_set_mode_and_config_option() {
 public func agent_load_and_delete_session() {
     let pair = PipePair()
     let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
-    agent.setOnLoadSession({ req =>
+    agent.setOnLoadSession({ req, complete, fail =>
         if (req.sessionId == "sess_existing") {
-            let resp = LoadSessionResponse()
-            Some(resp)
+            complete(JsonValue.fromObject(LoadSessionResponse()))
         } else {
-            None
+            fail(JsonRpcError(INVALID_PARAMS, "Unknown sessionId"))
         }
     })
     agent.setOnDeleteSession({ sid => sid == "sess_existing" })
@@ -389,6 +388,87 @@ public func agent_cancel_request_by_id() {
     match (respBox[0]) {
         case Result.Ok(resp) => @Expect(resp.stopReason, StopReasonCancelled)
         case Result.Err(e) => @Fail("prompt should not error on cancel: ${e}")
+    }
+    client.close()
+    agent.close()
+}
+
+// ===================== SessionStore =====================
+
+@Test
+public func session_store_persist_roundtrip() {
+    let path = "/tmp/session-store-test.json"
+    let store = SessionStore(path)
+    store.upsert(SessionRecord("sess_1", "/proj/a", "backend_1", title: Some("proj a")))
+    store.upsert(SessionRecord("sess_2", "/proj/b", "backend_2"))
+
+    // 重新加载（模拟重启）应能恢复
+    let store2 = SessionStore(path)
+    let rec = match (store2.get("sess_1")) {
+        case Some(r) => r
+        case None => return @Fail("session not restored")
+    }
+    @Expect(rec.cwd, "/proj/a")
+    @Expect(rec.backendSessionId, "backend_1")
+    @Expect(rec.title, Some("proj a"))
+    @Expect(store2.list().size, 2)
+
+    // 删除后持久化
+    store2.delete("sess_1")
+    let store3 = SessionStore(path)
+    @Expect(store3.get("sess_1").isNone(), true)
+    @Expect(store3.get("sess_2").isSome(), true)
+}
+
+// ===================== 异步 session/load 重放 =====================
+
+@Test
+public func agent_load_replays_history_then_responds() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.setPromptHandler({ ctx =>
+        ctx.emit(SessionUpdate.agentMessage("ok"))
+        PromptResponse(StopReasonEndTurn)
+    })
+    agent.setOnLoadSession({ req, complete, fail =>
+        // 重放历史：user message + agent reply（必须在 complete 之前全部发出）
+        agent.sessionUpdate(req.sessionId, SessionUpdate.userMessageChunk(ContentBlock.ofText("what's up")))
+        agent.sessionUpdate(req.sessionId, SessionUpdate.agentMessage("I'm fine"))
+        complete(JsonValue.fromObject(LoadSessionResponse()))
+    })
+    agent.start()
+    let client = AcpClient(pair.a())
+    let replayed = ArrayList<String>()
+    client.setOnSessionUpdate({ sid, update =>
+        match (update.content) {
+            case Some(c) =>
+                match (c.text) {
+                    case Some(t) => replayed.add(t)
+                    case None => ()
+                }
+            case None => ()
+        }
+    })
+    client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())
+
+    // load 成功：重放 2 条通知，然后响应
+    match (client.loadSession("sess_old", "/tmp")) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => @Fail("loadSession failed: ${e}")
+    }
+    var tries: Int64 = 0
+    while (replayed.size < 2 && tries < 100) {
+        tries++
+        sleep(10 * Duration.millisecond)
+    }
+    @Expect(replayed.size, 2)
+    @Expect(replayed[0], "what's up")
+    @Expect(replayed[1], "I'm fine")
+
+    // load 后该会话可用于 prompt（恢复的会话已注册）
+    match (client.promptText("sess_old", "hi")) {
+        case Result.Ok(resp) => @Expect(resp.stopReason, StopReasonEndTurn)
+        case Result.Err(e) => @Fail("prompt after load failed: ${e}")
     }
     client.close()
     agent.close()

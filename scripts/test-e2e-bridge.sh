@@ -25,3 +25,7 @@ timeout 60 ./target/release/bin/acp.examples.testclient "./target/release/bin/ac
 echo ""
 echo "==> 2) 完整代理链：acp-cj client -> acp-cj server(pi_bridge) -> opencode -> LLM"
 timeout 180 ./target/release/bin/acp.examples.testclient "./target/release/bin/acp.examples.pi_bridge" /tmp "${1:-Reply with only the word OK, nothing else}"
+
+echo ""
+echo "==> 3) session/load 历史重放（接真实 opencode）"
+python3 scripts/test-load-replay.py

@@ -4,7 +4,7 @@ import acp.*
 import acp.types.*
 import acp.transport.*
 import jsonvalue.*
-import ystyle::jsonrpc.{Result}
+import ystyle::jsonrpc.{Result, JsonRpcError}
 import std.env.{getCommandLine, getStdErr}
 import std.collection.{HashMap, ArrayList}
 import std.sync.*
@@ -16,12 +16,14 @@ import std.sync.*
  * - 作为 ACP 客户端连接一个真实后端 agent（默认 `opencode acp`）；
  * - 把收到的 session/prompt 转发给后端，并把后端的 session/update 流式通知
  *   转发回外部 Client（ACP 代理链）。
+ * - 支持 session 持久化 + session/load 历史重放（SessionStore 映射 + 后端重放转发）。
  *
  * 用法：
- *   pi_bridge [--echo] ["<后端agent命令>"]
+ *   pi_bridge [--echo] ["<后端agent命令>"] [--store <映射文件>]
  *
  *   --echo         不回连后端，直接回显（用于无 LLM 的协议冒烟测试）
  *   默认后端        "opencode acp"（需 XDG_DATA_HOME 指向可写目录）
+ *   --store        会话映射文件路径（默认 .pi-acp-sessions.json）
  */
 class ClientBox {
     public var client: ?AcpClient = None
@@ -41,9 +43,16 @@ main() {
     let args = getCommandLine()[1..]
     var echoFlag = false
     var backend = "opencode acp"
-    for (a in args) {
+    var storePath = ".pi-acp-sessions.json"
+    var idx: Int64 = 0
+    while (idx < args.size) {
+        let a = args[idx]
         if (a == "--echo") { echoFlag = true }
-        else if (!a.startsWith("-")) { backend = a }
+        else if (a == "--store") {
+            idx++
+            if (idx < args.size) { storePath = args[idx] }
+        } else if (!a.startsWith("-")) { backend = a }
+        idx++
     }
     let echoMode = echoFlag
     let backendCmd = backend
@@ -74,10 +83,15 @@ main() {
         logErr("[pi_bridge] echo 模式（不回连后端）")
     }
 
-    // ---- 会话映射：外部 sessionId <-> 后端 sessionId ----
+    // ---- 会话映射：外部 sessionId <-> 后端 sessionId（持久化） ----
+    let store = SessionStore(storePath)
+    logErr("[pi_bridge] 会话映射: ${storePath}（已恢复 ${store.list().size} 条）")
     let sidMap = HashMap<String, String>()
     let mapLock = Mutex()
-    let cwdOf = HashMap<String, String>()
+    // 启动时把持久化映射恢复到运行期
+    for (r in store.list()) {
+        synchronized(mapLock) { sidMap.add(r.sessionId, r.backendSessionId) }
+    }
 
     func backendSessionId(extId: String, cwd: String): ?String {
         synchronized(mapLock) {
@@ -89,6 +103,7 @@ main() {
                             match (c.newSession(cwd)) {
                                 case Result.Ok(resp) =>
                                     sidMap.add(extId, resp.sessionId)
+                                    store.upsert(SessionRecord(extId, cwd, resp.sessionId))
                                     Some(resp.sessionId)
                                 case Result.Err(e) =>
                                     logErr("[pi_bridge] 后端 session/new 失败: ${e}")
@@ -106,10 +121,7 @@ main() {
     agent.capabilities.promptCapabilities.image = true
     agent.capabilities.sessionCapabilities.list = Some(EmptyCapability())
     agent.capabilities.sessionCapabilities.delete = Some(EmptyCapability())
-
-    agent.setOnNewSession({ cwd =>
-        synchronized(mapLock) { cwdOf[cwd] = cwd }
-    })
+    agent.capabilities.sessionCapabilities.resume = Some(EmptyCapability())
 
     // 桥接通知：后端 session/update -> 外部 Client
     match (box.client) {
@@ -144,6 +156,51 @@ main() {
                     case None => PromptResponse(StopReasonRefusal)
                 }
             case None => PromptResponse(StopReasonRefusal)
+        }
+    })
+
+    // session/load：从 store 恢复映射，转发后端 load（后端重放历史，通知由桥接转发）
+    agent.setOnLoadSession({ req, complete, fail =>
+        if (echoMode) {
+            complete(JsonValue.fromObject(LoadSessionResponse()))
+            return
+        }
+        match (store.get(req.sessionId)) {
+            case Some(r) =>
+                match (box.client) {
+                    case Some(c) =>
+                        synchronized(mapLock) { sidMap.add(req.sessionId, r.backendSessionId) }
+                        match (c.loadSession(r.backendSessionId, req.cwd)) {
+                            case Result.Ok(_) => complete(JsonValue.fromObject(LoadSessionResponse()))
+                            case Result.Err(e) =>
+                                logErr("[pi_bridge] 后端 session/load 失败: ${e}")
+                                fail(JsonRpcError(INTERNAL_ERROR, "后端 load 失败: ${e}"))
+                        }
+                    case None => fail(JsonRpcError(INTERNAL_ERROR, "no backend"))
+                }
+            case None => fail(JsonRpcError(INVALID_PARAMS, "Unknown sessionId: ${req.sessionId}"))
+        }
+    })
+
+    // session/resume：转发后端 resume（后端不重放，直接可继续）
+    agent.setOnResumeSession({ req =>
+        if (echoMode) {
+            return Some(ResumeSessionResponse())
+        }
+        match (store.get(req.sessionId)) {
+            case Some(r) =>
+                match (box.client) {
+                    case Some(c) =>
+                        synchronized(mapLock) { sidMap.add(req.sessionId, r.backendSessionId) }
+                        match (c.resumeSession(r.backendSessionId, req.cwd)) {
+                            case Result.Ok(resp) => Some(resp)
+                            case Result.Err(e) =>
+                                logErr("[pi_bridge] 后端 session/resume 失败: ${e}")
+                                None
+                        }
+                    case None => None
+                }
+            case None => None
         }
     })
 
