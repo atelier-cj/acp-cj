@@ -1,7 +1,7 @@
 package acp
 
 import jsonvalue.*
-import ystyle::jsonrpc.{JsonRpcServer, Transport, NewlineFraming, HandlerContext, HandlerResult, Result, JsonRpcError}
+import ystyle::jsonrpc.{JsonRpcServer, Transport, NewlineFraming, HandlerContext, HandlerResult, Result, JsonRpcError, RequestId}
 import std.collection.*
 import std.sync.*
 import stdx.encoding.json.stream.*
@@ -20,6 +20,8 @@ public type SetModeCallback = (String /*sessionId*/, String /*modeId*/) -> Bool
 public type SetConfigOptionCallback = (String /*sessionId*/, SetSessionConfigOptionRequest) -> ?ArrayList<SessionConfigOption>
 public type LoadSessionCallback = (SessionLifecycleRequest) -> ?LoadSessionResponse
 public type DeleteSessionCallback = (String /*sessionId*/) -> Bool
+public type ResumeSessionCallback = (SessionLifecycleRequest) -> ?ResumeSessionResponse
+public type CancelRequestCallback = (String /*requestId 字符串化*/) -> Unit
 
 /**
  * PromptContext：一次 prompt 回合的执行上下文。
@@ -101,9 +103,13 @@ public class AcpAgent {
     private var setConfigOptionCb: ?SetConfigOptionCallback = None
     private var loadSessionCb: ?LoadSessionCallback = None
     private var deleteSessionCb: ?DeleteSessionCallback = None
+    private var resumeSessionCb: ?ResumeSessionCallback = None
+    private var cancelRequestCb: ?CancelRequestCallback = None
 
     // server 主动 request client 的串行锁（jsonrpc 0.7.2 server.request 单挂起）
     private let clientRequestLock = Mutex()
+    // $/cancel_request 支持：JSON-RPC 请求 id -> 进行中的 prompt 所在会话
+    private let activePrompts = HashMap<String, String>()
 
     public init(transport: Transport, name: String, version: String) {
         this.agentInfo = Implementation(name, version)
@@ -122,6 +128,8 @@ public class AcpAgent {
     public func setOnSetConfigOption(cb: SetConfigOptionCallback): Unit { this.setConfigOptionCb = Some(cb) }
     public func setOnLoadSession(cb: LoadSessionCallback): Unit { this.loadSessionCb = Some(cb) }
     public func setOnDeleteSession(cb: DeleteSessionCallback): Unit { this.deleteSessionCb = Some(cb) }
+    public func setOnResumeSession(cb: ResumeSessionCallback): Unit { this.resumeSessionCb = Some(cb) }
+    public func setOnCancelRequest(cb: CancelRequestCallback): Unit { this.cancelRequestCb = Some(cb) }
 
     // ===================== 生命周期 =====================
 
@@ -141,6 +149,8 @@ public class AcpAgent {
         this.rpcServer.register("session/set_mode", { ctx => this.handleSetMode(ctx) })
         this.rpcServer.register("session/set_config_option", { ctx => this.handleSetConfigOption(ctx) })
         this.rpcServer.register("session/load", { ctx => this.handleLoadSession(ctx) })
+        this.rpcServer.register("session/resume", { ctx => this.handleResumeSession(ctx) })
+        this.rpcServer.register("$/cancel_request", { ctx => this.handleCancelRequest(ctx) })
         this.rpcServer.register("session/delete", { ctx => this.handleDeleteSession(ctx) })
         this.rpcServer.register("authenticate", { ctx => this.handleAuthenticate(ctx) })
         this.rpcServer.register("logout", { ctx => this.handleLogout(ctx) })
@@ -203,6 +213,15 @@ public class AcpAgent {
                 fail(JsonRpcError(INTERNAL_ERROR, "No prompt handler registered"))
                 return
         }
+        // 记录请求 id -> 会话，供 $/cancel_request 按请求取消
+        let rid: ?RequestId = ctx.requestId
+        let reqKey: ?String = match (rid) {
+            case Some(r) => Some(this.requestIdKey(r))
+            case None => None
+        }
+        if (let Some(k) <- reqKey) {
+            synchronized(this.sessionLock) { this.activePrompts.add(k, s.sessionId) }
+        }
         // 串行执行：同一会话一次只处理一个回合
         synchronized(s.promptLock) {
             if (s.cancelFlag.load()) { s.cancelFlag.store(false) }
@@ -216,6 +235,24 @@ public class AcpAgent {
             }
             s.cancelFlag.store(false)
             complete(JsonValue.fromObject(finalResp))
+        }
+        if (let Some(k) <- reqKey) {
+            synchronized(this.sessionLock) { this.activePrompts.remove(k) }
+        }
+    }
+
+    // 把 RequestId 转成 map key 字符串（$/cancel_request 的 requestId 是 JsonValue，统一字符串化）
+    private func requestIdKey(rid: RequestId): String {
+        match (rid) {
+            case RequestId.Int(i) => "i" + i.toString()
+            case RequestId.String(s) => "s" + s
+        }
+    }
+    private func requestIdKeyFromJson(v: JsonValue): ?String {
+        match (v) {
+            case JsonValue.Number(n) => Some("i" + Int64(n).toString())
+            case JsonValue.String(s) => Some("s" + s)
+            case _ => None
         }
     }
 
@@ -304,6 +341,41 @@ public class AcpAgent {
                 }
             case None => HandlerResult.err(METHOD_NOT_FOUND, "session/load not supported")
         }
+    }
+
+    private func handleResumeSession(ctx: HandlerContext): HandlerResult {
+        let params = ctx.getParams<SessionLifecycleRequest>()
+        match (this.resumeSessionCb) {
+            case Some(cb) =>
+                match (cb(params ?? SessionLifecycleRequest())) {
+                    case Some(resp) => HandlerResult.ok(JsonValue.fromObject(resp))
+                    case None => HandlerResult.err(INVALID_PARAMS, "Unknown sessionId")
+                }
+            case None => HandlerResult.err(METHOD_NOT_FOUND, "session/resume not supported")
+        }
+    }
+
+    private func handleCancelRequest(ctx: HandlerContext): HandlerResult {
+        // $/cancel_request 是通知：按 requestId 取消对应的进行中请求（主要是 session/prompt）
+        let sessionId: ?String = match (ctx.getParam("requestId")) {
+            case Some(v) =>
+                let k: ?String = this.requestIdKeyFromJson(v)
+                match (k) {
+                    case Some(key) =>
+                        let found: ?String = synchronized(this.sessionLock) { this.activePrompts.get(key) }
+                        found
+                    case None => None
+                }
+            case None => None
+        }
+        if (let Some(sid) <- sessionId) {
+            if (let Some(s) <- synchronized(this.sessionLock) { this.sessions.get(sid) }) {
+                s.cancelFlag.store(true)
+                if (let Some(cb) <- this.cancelRequestCb) { cb(sid) }
+            }
+        }
+        // 通知不返回响应
+        HandlerResult.ok(JsonValue.Null)
     }
 
     private func handleDeleteSession(ctx: HandlerContext): HandlerResult {

@@ -137,6 +137,13 @@ public class AcpClient {
         this.rpcClient.notify<CancelNotification>("session/cancel", params: notif)
     }
 
+    // $/cancel_request 协议级通知：按 JSON-RPC 请求 id 取消对应请求
+    public func cancelRequest(requestId: JsonValue): Unit {
+        let notif = CancelRequestNotification()
+        notif.requestId = requestId
+        this.rpcClient.notify<CancelRequestNotification>("$/cancel_request", params: notif)
+    }
+
     // ===================== 模式 / 配置 =====================
 
     public func setMode(sessionId: String, modeId: String, timeout!: Duration = 30 * Duration.second): Result<EmptyResult> {

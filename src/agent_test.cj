@@ -319,3 +319,77 @@ public func agent_usage_update_notification() {
     client.close()
     agent.close()
 }
+
+// ===================== session/resume 与 $/cancel_request =====================
+
+@Test
+public func agent_resume_session() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.setOnResumeSession({ req =>
+        if (req.sessionId == "sess_keep") {
+            Some(ResumeSessionResponse())
+        } else {
+            None
+        }
+    })
+    agent.start()
+    let client = AcpClient(pair.a())
+    client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())
+
+    // resume 成功
+    match (client.resumeSession("sess_keep", "/tmp")) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => @Fail("resumeSession failed: ${e}")
+    }
+    // resume 失败（未知会话）
+    match (client.resumeSession("sess_missing", "/tmp")) {
+        case Result.Ok(_) => @Fail("expected resumeSession error")
+        case Result.Err(_) => ()
+    }
+    client.close()
+    agent.close()
+}
+
+@Test
+public func agent_cancel_request_by_id() {
+    let pair = PipePair()
+    // 慢速 prompt handler：轮询取消标志
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.setPromptHandler({ ctx =>
+        while (!ctx.isCancelled()) {
+            sleep(10 * Duration.millisecond)
+        }
+        PromptResponse(StopReasonCancelled)
+    })
+    agent.start()
+
+    let client = AcpClient(pair.a())
+    client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())  // id=1
+    let sessionId = match (client.newSession("/tmp/proj")) {                       // id=2
+        case Result.Ok(resp) => resp.sessionId
+        case Result.Err(e) => return @Fail("newSession failed: ${e}")
+    }
+
+    // 发起 prompt（自动 id=3），阻塞在 spawn 线程
+    let respBox = ArrayList<Result<PromptResponse>>()
+    spawn {
+        respBox.add(client.promptText(sessionId, "long task", timeout: 30 * Duration.second))
+    }
+    sleep(200 * Duration.millisecond)
+    // $/cancel_request 按 id=3 取消（jsonrpc 自动 id：initialize=1, newSession=2, prompt=3）
+    client.cancelRequest(JsonValue.Number(3.0))
+
+    var tries: Int64 = 0
+    while (respBox.size == 0 && tries < 200) {
+        tries++
+        sleep(10 * Duration.millisecond)
+    }
+    @Expect(respBox.size, 1)
+    match (respBox[0]) {
+        case Result.Ok(resp) => @Expect(resp.stopReason, StopReasonCancelled)
+        case Result.Err(e) => @Fail("prompt should not error on cancel: ${e}")
+    }
+    client.close()
+    agent.close()
+}
