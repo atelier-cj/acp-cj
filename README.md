@@ -21,7 +21,7 @@
 ├───────────────────────────────────────────────┤
 │  acp.types   协议类型（ContentBlock、SessionUpdate…）│
 ├───────────────────────────────────────────────┤
-│  ystyle::jsonrpc（本地 path 依赖，含 registerAsyncErr）│
+│  ystyle::jsonrpc 0.7.3（注册表依赖，含 registerAsyncErr）│
 │  jsonvalue / sonyflake                        │
 └───────────────────────────────────────────────┘
 ```
@@ -30,7 +30,7 @@
 
 ```toml
 [dependencies]
-  acp = { path = "../acp-cj" }   # 或中心仓版本（待发版）
+  acp = "0.1.0"   # 中心仓版本；本地开发可用 { path = "../acp-cj" }
 ```
 
 ```bash
@@ -156,7 +156,7 @@ export XDG_DATA_HOME=$PWD/.opencode-data
 | `authenticate` / `logout` | ✅ |
 | `session/request_permission`（Agent→Client 反向调用） | ✅ |
 | `terminal/*` `fs/*`（Agent→Client 反向调用便捷封装） | ✅ |
-| `$/cancel_request` | 待补（协议级） |
+| `$/cancel_request` | ✅ |
 | `elicitation/*` | 类型定义级（v1 范围外 UI） |
 
 `session/update` 判别：`user_message_chunk / agent_message_chunk / agent_thought_chunk / tool_call / tool_call_update / plan / available_commands_update / current_mode_update / config_option_update / session_info_update / usage_update` 全部支持。
@@ -164,7 +164,7 @@ export XDG_DATA_HOME=$PWD/.opencode-data
 ## 测试
 
 ```bash
-cjpm test -j 16 --no-progress   # 32 个单元测试（types 往返 / transport / client / agent）
+cjpm test -j 16 --no-progress   # 39 个单元测试（types 往返 / transport / client / agent）
 ./scripts/test-e2e-bridge.sh    # 真实环境端到端（需要 opencode + LLM key）
 ```
 

@@ -6,7 +6,7 @@
 
 - 状态：设计中
 - 协议版本：ACP **v1**（`protocolVersion: 1`）
-- 依赖：`ystyle::jsonrpc` 0.7.2 + `jsonvalue`（与 [mcp-cj](../mcp-cj) 同构的分层架构）
+- 依赖：`ystyle::jsonrpc` 0.7.3 + `jsonvalue`（与 [mcp-cj](../mcp-cj) 同构的分层架构）
 
 ---
 
@@ -109,12 +109,12 @@ JSON-RPC 标准错误（-32700/-32600/-32601/-32602/-32603）+ ACP 保留区间�
 ├─────────────────────────────────────────────────────────┤
 │  acp.types   协议类型（JsonSerializable / Deserializable）│
 ├─────────────────────────────────────────────────────────┤
-│  ystyle::jsonrpc 0.7.2   ← 复用 mcp-cj 同款 JSON-RPC 引擎 │
+│  ystyle::jsonrpc 0.7.3   ← 复用 mcp-cj 同款 JSON-RPC 引擎 │
 │  jsonvalue 1.1.0                                        │
 └─────────────────────────────────────────────────────────┘
 ```
 
-复用点（全部来自 `ystyle::jsonrpc` 0.7.2）：
+复用点（全部来自 `ystyle::jsonrpc` 0.7.3）：
 
 | 能力 | jsonrpc 提供 | ACP 用途 |
 |------|-------------|----------|
@@ -192,7 +192,7 @@ acp-cj/
         └── echo_agent/      # 无 LLM 的 echo agent，用于纯协议冒烟测试
 ```
 
-包名：`acp`，依赖 `ystyle::jsonrpc = "0.7.2"`、`jsonvalue = "1.1.0"`、`sonyflake`（ID 生成）。
+包名：`acp`，依赖 `ystyle::jsonrpc = "0.7.3"`、`jsonvalue = "1.1.0"`、`sonyflake`（ID 生成）。
 
 ---
 
@@ -493,4 +493,4 @@ cjpm run acp.examples.testclient -- --agent pi-acp
 - 官方 schema：`docs/schema/schema.json`（GitHub release 最新）
 - pi RPC：https://pi.dev/docs/latest/rpc
 - pi-acp 参考实现：https://github.com/svkozak/pi-acp（MIT，源码）
-- 复用库：`ystyle::jsonrpc` 0.7.2、`jsonvalue`、`sonyflake`（均为本地已有项目）
+- 复用库：`ystyle::jsonrpc` 0.7.3（中心仓，含 `registerAsyncErr` + `HandlerContext.requestId`）、`jsonvalue`、`sonyflake`
