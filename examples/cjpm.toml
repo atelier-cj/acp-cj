@@ -1,21 +1,24 @@
 [package]
-  cjc-version = "1.1.3"
-  name = "acp_probe_test"
-  organization = ""
-  description = "acp-cj 演示：拉起 opencode 走完整 ACP 链路的演示客户端"
-  version = "0.1.0"
-  target-dir = ""
-  src-dir = ""
-  script-dir = ""
-  output-type = "executable"
-  compile-option = ""
-  override-compile-option = ""
-  link-option = "-lstdx.crypto.digest"
-  package-configuration = {}
+cjc-version = "1.1.3"
+name = "acp_probe_test"
+organization = ""
+description = "acp-cj 演示：拉起 opencode 走完整 ACP 链路的演示客户端"
+version = "0.1.0"
+target-dir = ""
+src-dir = ""
+script-dir = ""
+output-type = "executable"
+compile-option = ""
+override-compile-option = ""
+link-option = "-lstdx.crypto.digest"
+package-configuration = {}
 
 [dependencies]
-  acp = { path = ".." }
-  "ystyle::jsonrpc" = "0.7.3"
+acp = "[0.1.2, 1.0.0)"
+"ystyle::jsonrpc" = "0.7.3"
 
 [target.x86_64-unknown-linux-gnu.bin-dependencies]
-path-option = [ "${CANGJIE_STDX_PATH}" ]
+path-option = ["${CANGJIE_STDX_PATH}"]
+
+[target.x86_64-w64-mingw32.bin-dependencies]
+path-option = ["${CANGJIE_STDX_PATH}"]
