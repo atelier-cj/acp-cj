@@ -165,6 +165,16 @@ public class AcpClient {
         this.rpcClient.call<SetSessionConfigOptionRequest, SetSessionConfigOptionResponse>("session/set_config_option", params: req, timeout: timeout)
     }
 
+    // ===================== 扩展方法 =====================
+
+    /// 调用 Agent 注册的扩展方法（`_` 前缀，配合 AcpAgent.registerExtensionMethod）。
+    /// 返回原始 JsonValue 结果；未注册/未处理时得到 -32601 错误。
+    public func extensionCall(method: String, params: JsonValue,
+                              timeout!: Duration = 30 * Duration.second): Result<JsonValue> {
+        if (!this.initialized) { return Result.Err("Client not initialized") }
+        this.rpcClient.call<JsonValue, JsonValue>(method, params: Some(params), timeout: timeout)
+    }
+
     // ===================== 认证 =====================
 
     public func authenticate(methodId: String, timeout!: Duration = 30 * Duration.second): Result<EmptyResult> {

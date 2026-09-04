@@ -25,6 +25,10 @@ public type DeleteSessionCallback = (String /*sessionId*/) -> Bool
 public type ResumeSessionCallback = (SessionLifecycleRequest) -> ?ResumeSessionResponse
 public type CancelRequestCallback = (String /*requestId 字符串化*/) -> Unit
 
+/// 扩展方法处理器：入参为请求 params（原始 JsonValue），返回 Some(result) 作为响应结果；
+/// 返回 None 表示未处理（响应 -32601 Method not found）。
+public type ExtensionHandler = (JsonValue /*params*/) -> ?JsonValue
+
 /**
  * PromptContext：一次 prompt 回合的执行上下文。
  * 处理器通过 emit 推送 session/update 通知，通过 isCancelled 检测取消。
@@ -172,6 +176,25 @@ public class AcpAgent {
     public func setOnCancelRequest(cb: CancelRequestCallback): Unit { this.cancelRequestCb = Some(cb) }
     public func setOnAuthenticated(cb: CancelRequestCallback): Unit { this.onAuthenticatedCb = Some(cb) }
     public func setOnLoggedOut(cb: CancelRequestCallback): Unit { this.onLoggedOutCb = Some(cb) }
+
+    /**
+     * 注册 ACP 扩展方法（客户端发来的自定义请求）。
+     * ACP 约定自定义方法名以 `_` 开头；非 `_` 前缀的方法名直接抛异常拒绝，
+     * 避免误覆盖协议方法。
+     */
+    public func registerExtensionMethod(method: String, handler: ExtensionHandler): Unit {
+        if (!method.startsWith("_")) {
+            throw Exception("ACP extension methods must start with '_': ${method}")
+        }
+        this.rpcServer.register(method, { ctx =>
+            let params: JsonValue = ctx.getRawParams() ?? JsonValue.Null
+            match (handler(params)) {
+                case Some(result) => HandlerResult.ok(result)
+                case None => HandlerResult.err(METHOD_NOT_FOUND,
+                    "Extension method returned no result: ${method}")
+            }
+        })
+    }
 
     // 是否已认证（未启用门控时恒为 true）
     public func isAuthenticated(): Bool { !this.authRequired || this.authenticated }

@@ -655,3 +655,58 @@ public func agent_prompt_context_can_query_client_caps() {
     client.close()
     agent.close()
 }
+
+// ===================== 1.3 扩展方法 =====================
+
+@Test
+public func agent_extension_method_roundtrip() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    // 注册 _ 前缀扩展方法：回显 params.echo
+    agent.registerExtensionMethod("_ping", { params =>
+        match (params["echo"]) {
+            case Some(JsonValue.String(s)) => Some(JsonValue.String("pong:" + s))
+            case _ => Some(JsonValue.String("pong:empty"))
+        }
+    })
+    agent.start()
+    let client = AcpClient(pair.a())
+    match (client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("connect failed: ${e}")
+    }
+
+    // 正常调用
+    let m = HashMap<String, JsonValue>()
+    m["echo"] = JsonValue.String("hello")
+    match (client.extensionCall("_ping", JsonValue.Map(m))) {
+        case Result.Ok(v) =>
+            match (v) {
+                case JsonValue.String(s) => @Expect(s, "pong:hello")
+                case _ => @Fail("unexpected result: ${v}")
+            }
+        case Result.Err(e) => @Fail("extensionCall failed: ${e}")
+    }
+
+    // 未注册方法 → -32601
+    match (client.extensionCall("_nope", JsonValue.Map(HashMap<String, JsonValue>()))) {
+        case Result.Ok(_) => @Fail("expected method not found")
+        case Result.Err(e) => @Expect(e.contains("-32601"), true)
+    }
+    client.close()
+    agent.close()
+}
+
+@Test
+public func agent_extension_method_must_start_with_underscore() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    var threw = false
+    try {
+        agent.registerExtensionMethod("session/new", { params => None })
+    } catch (e: Exception) {
+        threw = true
+    }
+    @Expect(threw, true)
+    agent.close()
+}
