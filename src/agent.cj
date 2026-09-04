@@ -468,9 +468,22 @@ public class AcpAgent {
     }
 
     private func handleAuthenticate(ctx: HandlerContext): HandlerResult {
-        // 协议驱动认证：标记已认证（业务侧可在此基础上做真实校验）
+        // 协议驱动认证：methodId 必须已在 authMethods 广告，
+        // 且方法类型不是 terminal（terminal 型由客户端另起交互进程登录，不得走本流程）
+        let methodId = ctx.getParams<AuthenticateRequest>()?.methodId ?? ""
+        var valid: Bool = false
+        for (m in this.authMethods) {
+            if (m.id == methodId) {
+                let methodType = m.`type` ?? "agent"
+                valid = methodType != "terminal"
+            }
+        }
+        if (!valid) {
+            return HandlerResult.err(INVALID_PARAMS,
+                "Unknown or non-protocol authentication method: ${methodId}")
+        }
         this.authenticated = true
-        if (let Some(cb) <- this.onAuthenticatedCb) { cb("") }
+        if (let Some(cb) <- this.onAuthenticatedCb) { cb(methodId) }
         HandlerResult.ok(JsonValue.fromObject(EmptyResult()))
     }
 

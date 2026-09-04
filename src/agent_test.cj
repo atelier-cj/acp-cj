@@ -486,6 +486,10 @@ public func agent_auth_required_gating() {
     agent.authMethods[0].name = "Launch pi in the terminal"
     agent.authMethods[0].`type` = Some("terminal")
     agent.authMethods[0].args = Some(ArrayList<String>(["--terminal-login"]))
+    // agent 型（默认）：走协议 authenticate 流程
+    agent.authMethods.add(AuthMethod())
+    agent.authMethods[1].id = "agent_login"
+    agent.authMethods[1].name = "Agent login"
     agent.start()
     let client = AcpClient(pair.a())
     client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())
@@ -496,8 +500,20 @@ public func agent_auth_required_gating() {
         case Result.Err(e) => @Expect(e.contains("-32000"), true)
     }
 
-    // authenticate 后：session/new 成功
+    // terminal 型方法不得走协议 authenticate（规范：Clients MUST NOT pass a terminal method）
     match (client.authenticate("pi_terminal_login")) {
+        case Result.Ok(_) => @Fail("terminal method must not be protocol-authenticated")
+        case Result.Err(e) => @Expect(e.contains("-32602"), true)
+    }
+
+    // 未广告的 methodId 应拒绝
+    match (client.authenticate("no_such_method")) {
+        case Result.Ok(_) => @Fail("unknown method must be rejected")
+        case Result.Err(e) => @Expect(e.contains("-32602"), true)
+    }
+
+    // agent 型 authenticate 后：session/new 成功
+    match (client.authenticate("agent_login")) {
         case Result.Ok(_) => ()
         case Result.Err(e) => @Fail("authenticate failed: ${e}")
     }
@@ -514,6 +530,9 @@ public func agent_logout_clears_auth() {
     let pair = PipePair()
     let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
     agent.authRequired = true
+    agent.authMethods.add(AuthMethod())
+    agent.authMethods[0].id = "m"
+    agent.authMethods[0].name = "Agent login"
     agent.start()
     let client = AcpClient(pair.a())
     client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())
