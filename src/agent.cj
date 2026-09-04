@@ -4,6 +4,7 @@ import jsonvalue.*
 import ystyle::jsonrpc.{JsonRpcServer, Transport, NewlineFraming, HandlerContext, HandlerResult, Result, JsonRpcError, RequestId}
 import std.collection.*
 import std.sync.*
+import std.fs.Path
 import stdx.encoding.json.stream.*
 import sonyflake.*
 import std.random.Random
@@ -25,6 +26,10 @@ public type DeleteSessionCallback = (String /*sessionId*/) -> Bool
 public type ResumeSessionCallback = (SessionLifecycleRequest) -> ?ResumeSessionResponse
 public type CancelRequestCallback = (String /*requestId 字符串化*/) -> Unit
 
+/// 扩展方法处理器：入参为请求 params（原始 JsonValue），返回 Some(result) 作为响应结果；
+/// 返回 None 表示未处理（响应 -32601 Method not found）。
+public type ExtensionHandler = (JsonValue /*params*/) -> ?JsonValue
+
 /**
  * PromptContext：一次 prompt 回合的执行上下文。
  * 处理器通过 emit 推送 session/update 通知，通过 isCancelled 检测取消。
@@ -35,14 +40,18 @@ public class PromptContext {
     public let cwd: String
     private let emitFn: (SessionUpdate) -> Unit
     private let cancelFlag: AtomicBool
+    // 客户端在 initialize 中声明的能力查询（规范要求调用 fs/terminal/elicitation 前 MUST 检查）
+    private let capsQuery: () -> ?ClientCapabilities
 
     public init(sessionId: String, cwd: String, prompt: ArrayList<ContentBlock>,
-                emitFn: (SessionUpdate) -> Unit, cancelFlag: AtomicBool) {
+                emitFn: (SessionUpdate) -> Unit, cancelFlag: AtomicBool,
+                capsQuery: () -> ?ClientCapabilities) {
         this.sessionId = sessionId
         this.cwd = cwd
         this.prompt = prompt
         this.emitFn = emitFn
         this.cancelFlag = cancelFlag
+        this.capsQuery = capsQuery
     }
 
     public func emit(update: SessionUpdate): Unit { this.emitFn(update) }
@@ -56,6 +65,33 @@ public class PromptContext {
             }
         }
         out
+    }
+
+    /// 客户端在 initialize 中声明的能力（None = 尚未握手/未保存）
+    public func clientCaps(): ?ClientCapabilities { this.capsQuery() }
+
+    /// 客户端是否支持 fs/read_text_file（规范：不支持则 MUST NOT 调用）
+    public func canReadTextFile(): Bool {
+        match (this.capsQuery()) {
+            case Some(c) => c.fs.readTextFile
+            case None => false
+        }
+    }
+
+    /// 客户端是否支持 fs/write_text_file
+    public func canWriteTextFile(): Bool {
+        match (this.capsQuery()) {
+            case Some(c) => c.fs.writeTextFile
+            case None => false
+        }
+    }
+
+    /// 客户端是否支持全部 terminal/* 方法
+    public func canUseTerminal(): Bool {
+        match (this.capsQuery()) {
+            case Some(c) => c.terminal
+            case None => false
+        }
     }
 }
 
@@ -97,6 +133,8 @@ public class AcpAgent {
     // 认证门控：true 表示 session/new 前必须通过 authenticate（或终端登录）
     public var authRequired: Bool = false
     private var authenticated: Bool = false
+    // 客户端在 initialize 中声明的能力（握手后填充，供业务判断能否调用 fs/terminal/elicitation 等）
+    public var clientCapabilities: ?ClientCapabilities = None
 
     // 业务钩子
     private var promptHandler: ?PromptHandler = None
@@ -140,6 +178,25 @@ public class AcpAgent {
     public func setOnAuthenticated(cb: CancelRequestCallback): Unit { this.onAuthenticatedCb = Some(cb) }
     public func setOnLoggedOut(cb: CancelRequestCallback): Unit { this.onLoggedOutCb = Some(cb) }
 
+    /**
+     * 注册 ACP 扩展方法（客户端发来的自定义请求）。
+     * ACP 约定自定义方法名以 `_` 开头；非 `_` 前缀的方法名直接抛异常拒绝，
+     * 避免误覆盖协议方法。
+     */
+    public func registerExtensionMethod(method: String, handler: ExtensionHandler): Unit {
+        if (!method.startsWith("_")) {
+            throw Exception("ACP extension methods must start with '_': ${method}")
+        }
+        this.rpcServer.register(method, { ctx =>
+            let params: JsonValue = ctx.getRawParams() ?? JsonValue.Null
+            match (handler(params)) {
+                case Some(result) => HandlerResult.ok(result)
+                case None => HandlerResult.err(METHOD_NOT_FOUND,
+                    "Extension method returned no result: ${method}")
+            }
+        })
+    }
+
     // 是否已认证（未启用门控时恒为 true）
     public func isAuthenticated(): Bool { !this.authRequired || this.authenticated }
 
@@ -173,6 +230,8 @@ public class AcpAgent {
     private func handleInitialize(ctx: HandlerContext): HandlerResult {
         let params = ctx.getParams<InitializeRequest>()
         let requested = params?.protocolVersion ?? ProtocolVersionV1
+        // 保存客户端声明的能力（业务层在反向调用前据此做规范要求的能力检查）
+        if (let Some(p) <- params) { this.clientCapabilities = Some(p.clientCapabilities) }
         let resp = InitializeResponse()
         resp.protocolVersion = if (requested == this.protocolVersion) { requested } else { this.protocolVersion }
         resp.agentInfo = Some(this.agentInfo)
@@ -188,6 +247,15 @@ public class AcpAgent {
         }
         if (params.cwd.isEmpty()) {
             return HandlerResult.err(INVALID_PARAMS, "cwd must be an absolute path")
+        }
+        // 1.6 A1：规范要求 cwd 为绝对路径
+        let absOk = try {
+            Path(params.cwd).isAbsolute()
+        } catch (e: Exception) {
+            false
+        }
+        if (!absOk) {
+            return HandlerResult.err(INVALID_PARAMS, "cwd must be an absolute path: ${params.cwd}")
         }
         if (!this.isAuthenticated()) {
             // auth_required：-32000，data 携带 authMethods
@@ -246,7 +314,8 @@ public class AcpAgent {
         // 串行执行：同一会话一次只处理一个回合
         synchronized(s.promptLock) {
             if (s.cancelFlag.load()) { s.cancelFlag.store(false) }
-            let pc = PromptContext(s.sessionId, s.cwd, params.prompt, { u => this.sessionUpdate(s.sessionId, u) }, s.cancelFlag)
+            let pc = PromptContext(s.sessionId, s.cwd, params.prompt, { u => this.sessionUpdate(s.sessionId, u) },
+                s.cancelFlag, { => this.clientCapabilities })
             let resp = handler(pc)
             // 若回合结束时取消标志仍为真，且处理器返回 end_turn，统一转为 cancelled
             let finalResp = if (s.cancelFlag.load() && resp.stopReason == StopReasonEndTurn) {
@@ -432,9 +501,22 @@ public class AcpAgent {
     }
 
     private func handleAuthenticate(ctx: HandlerContext): HandlerResult {
-        // 协议驱动认证：标记已认证（业务侧可在此基础上做真实校验）
+        // 协议驱动认证：methodId 必须已在 authMethods 广告，
+        // 且方法类型不是 terminal（terminal 型由客户端另起交互进程登录，不得走本流程）
+        let methodId = ctx.getParams<AuthenticateRequest>()?.methodId ?? ""
+        var valid: Bool = false
+        for (m in this.authMethods) {
+            if (m.id == methodId) {
+                let methodType = m.`type` ?? "agent"
+                valid = methodType != "terminal"
+            }
+        }
+        if (!valid) {
+            return HandlerResult.err(INVALID_PARAMS,
+                "Unknown or non-protocol authentication method: ${methodId}")
+        }
         this.authenticated = true
-        if (let Some(cb) <- this.onAuthenticatedCb) { cb("") }
+        if (let Some(cb) <- this.onAuthenticatedCb) { cb(methodId) }
         HandlerResult.ok(JsonValue.fromObject(EmptyResult()))
     }
 
@@ -452,6 +534,48 @@ public class AcpAgent {
         notif.sessionId = sessionId
         notif.update = update
         this.rpcServer.notify<SessionNotification>("session/update", params: notif)
+    }
+
+    /// 发送 ACP 扩展通知（Agent → Client，方法名按约定以 `_` 开头）
+    public func sendExtensionNotification(method: String, params!: ?JsonValue = None): Unit {
+        match (params) {
+            case Some(p) => this.rpcServer.notify<JsonValue>(method, params: p)
+            case None => this.rpcServer.notify(method)
+        }
+    }
+
+    /**
+     * elicitation/create 反向请求：向 Client 请求用户的结构化输入（form / url 模式）。
+     * 前置能力检查（规范 MUST NOT）：Client 未在 initialize 广告对应模式时返回
+     * -32602 Invalid params 语义错误。
+     */
+    public func createElicitation(req: CreateElicitationRequest,
+                                  timeout!: Duration = 5 * Duration.minute): Result<CreateElicitationResponse> {
+        var supported: Bool = false
+        match (this.clientCapabilities) {
+            case Some(c) =>
+                match (c.elicitation) {
+                    case Some(e) =>
+                        if (req.mode == ElicitationModeForm) { supported = e.form.isSome() }
+                        else if (req.mode == ElicitationModeUrl) { supported = e.url.isSome() }
+                        else { supported = true }  // 自定义/未来 mode 无法按标准能力判定 → 放行
+                    case None => ()
+                }
+            case None => ()
+        }
+        if (!supported) {
+            return Result.Err("[-32602] Client does not advertise elicitation mode: ${req.mode}")
+        }
+        synchronized(this.clientRequestLock) {
+            this.rpcServer.request<CreateElicitationRequest, CreateElicitationResponse>(
+                "elicitation/create", params: req, timeout: timeout)
+        }
+    }
+
+    /// URL 模式外部交互完成通知（Agent → Client；elicitationId 与原请求一致）
+    public func elicitationComplete(elicitationId: ElicitationId): Unit {
+        this.rpcServer.notify<CompleteElicitationNotification>("elicitation/complete",
+            params: CompleteElicitationNotification(elicitationId))
     }
 
     // ===================== 反向调用（Agent → Client 请求） =====================

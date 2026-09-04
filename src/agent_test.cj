@@ -486,6 +486,10 @@ public func agent_auth_required_gating() {
     agent.authMethods[0].name = "Launch pi in the terminal"
     agent.authMethods[0].`type` = Some("terminal")
     agent.authMethods[0].args = Some(ArrayList<String>(["--terminal-login"]))
+    // agent 型（默认）：走协议 authenticate 流程
+    agent.authMethods.add(AuthMethod())
+    agent.authMethods[1].id = "agent_login"
+    agent.authMethods[1].name = "Agent login"
     agent.start()
     let client = AcpClient(pair.a())
     client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())
@@ -496,8 +500,20 @@ public func agent_auth_required_gating() {
         case Result.Err(e) => @Expect(e.contains("-32000"), true)
     }
 
-    // authenticate 后：session/new 成功
+    // terminal 型方法不得走协议 authenticate（规范：Clients MUST NOT pass a terminal method）
     match (client.authenticate("pi_terminal_login")) {
+        case Result.Ok(_) => @Fail("terminal method must not be protocol-authenticated")
+        case Result.Err(e) => @Expect(e.contains("-32602"), true)
+    }
+
+    // 未广告的 methodId 应拒绝
+    match (client.authenticate("no_such_method")) {
+        case Result.Ok(_) => @Fail("unknown method must be rejected")
+        case Result.Err(e) => @Expect(e.contains("-32602"), true)
+    }
+
+    // agent 型 authenticate 后：session/new 成功
+    match (client.authenticate("agent_login")) {
         case Result.Ok(_) => ()
         case Result.Err(e) => @Fail("authenticate failed: ${e}")
     }
@@ -514,6 +530,9 @@ public func agent_logout_clears_auth() {
     let pair = PipePair()
     let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
     agent.authRequired = true
+    agent.authMethods.add(AuthMethod())
+    agent.authMethods[0].id = "m"
+    agent.authMethods[0].name = "Agent login"
     agent.start()
     let client = AcpClient(pair.a())
     client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())
@@ -560,4 +579,423 @@ public func client_terminal_login_exit_code() {
         case Result.Ok(code) => @Expect(code, 0)
         case Result.Err(e) => @Fail("terminalLogin failed: ${e}")
     }
+}
+
+// ===================== 1.1 clientCapabilities 保存与透出 =====================
+
+@Test
+public func agent_preserves_client_capabilities() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.setPromptHandler({ ctx =>
+        PromptResponse(StopReasonEndTurn)
+    })
+    agent.start()
+    let client = AcpClient(pair.a())
+
+    let caps = ClientCapabilities()
+    caps.fs.readTextFile = true
+    caps.fs.writeTextFile = true
+    caps.terminal = true
+    caps.auth.terminal = true
+    match (client.connect(Implementation("test-client", "1.0.0"), caps)) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("connect failed: ${e}")
+    }
+    // Agent 侧保存了客户端声明的能力
+    match (agent.clientCapabilities) {
+        case Some(c) =>
+            @Expect(c.fs.readTextFile, true)
+            @Expect(c.fs.writeTextFile, true)
+            @Expect(c.terminal, true)
+            @Expect(c.auth.terminal, true)
+        case None => @Fail("clientCapabilities not preserved")
+    }
+    client.close()
+    agent.close()
+}
+
+@Test
+public func agent_prompt_context_can_query_client_caps() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    // prompt 处理器内查询客户端能力（规范要求调用 fs/terminal 前检查）
+    let observed = ArrayList<String>()
+    agent.setPromptHandler({ ctx =>
+        observed.add("read=${ctx.canReadTextFile()}")
+        observed.add("write=${ctx.canWriteTextFile()}")
+        observed.add("terminal=${ctx.canUseTerminal()}")
+        observed.add("hasCaps=${!ctx.clientCaps().isNone()}")
+        PromptResponse(StopReasonEndTurn)
+    })
+    agent.start()
+    let client = AcpClient(pair.a())
+    let caps = ClientCapabilities()
+    caps.fs.readTextFile = true
+    caps.terminal = true
+    match (client.connect(Implementation("test-client", "1.0.0"), caps)) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("connect failed: ${e}")
+    }
+    match (client.newSession("/tmp/proj")) {
+        case Result.Ok(resp) =>
+            let sid = resp.sessionId
+            let blocks = ArrayList<ContentBlock>()
+            blocks.add(ContentBlock.ofText("hi"))
+            match (client.prompt(sid, blocks)) {
+                case Result.Ok(_) => ()
+                case Result.Err(e) => return @Fail("prompt failed: ${e}")
+            }
+        case Result.Err(e) => return @Fail("newSession failed: ${e}")
+    }
+    @Expect(observed.contains("read=true"), true)
+    @Expect(observed.contains("write=false"), true)
+    @Expect(observed.contains("terminal=true"), true)
+    @Expect(observed.contains("hasCaps=true"), true)
+    client.close()
+    agent.close()
+}
+
+// ===================== 1.3 扩展方法 =====================
+
+@Test
+public func agent_extension_method_roundtrip() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    // 注册 _ 前缀扩展方法：回显 params.echo
+    agent.registerExtensionMethod("_ping", { params =>
+        match (params["echo"]) {
+            case Some(JsonValue.String(s)) => Some(JsonValue.String("pong:" + s))
+            case _ => Some(JsonValue.String("pong:empty"))
+        }
+    })
+    agent.start()
+    let client = AcpClient(pair.a())
+    match (client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("connect failed: ${e}")
+    }
+
+    // 正常调用
+    let m = HashMap<String, JsonValue>()
+    m["echo"] = JsonValue.String("hello")
+    match (client.extensionCall("_ping", JsonValue.Map(m))) {
+        case Result.Ok(v) =>
+            match (v) {
+                case JsonValue.String(s) => @Expect(s, "pong:hello")
+                case _ => @Fail("unexpected result: ${v}")
+            }
+        case Result.Err(e) => @Fail("extensionCall failed: ${e}")
+    }
+
+    // 未注册方法 → -32601
+    match (client.extensionCall("_nope", JsonValue.Map(HashMap<String, JsonValue>()))) {
+        case Result.Ok(_) => @Fail("expected method not found")
+        case Result.Err(e) => @Expect(e.contains("-32601"), true)
+    }
+    client.close()
+    agent.close()
+}
+
+@Test
+public func agent_extension_method_must_start_with_underscore() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    var threw = false
+    try {
+        agent.registerExtensionMethod("session/new", { params => None })
+    } catch (e: Exception) {
+        threw = true
+    }
+    @Expect(threw, true)
+    agent.close()
+}
+
+// ===================== 1.5 Client 侧类型化反向 handler =====================
+
+@Test
+public func agent_typed_reverse_handlers_roundtrip() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.start()
+    let client = AcpClient(pair.a())
+    match (client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("connect failed: ${e}")
+    }
+    // Client 侧类型化注册（C2）：全部 8 类反向方法
+    client.setOnRequestPermission({ req =>
+        RequestPermissionResponse(RequestPermissionOutcome.selected(req.options[0].optionId))
+    })
+    client.setOnReadTextFile({ req =>
+        let r = ReadTextFileResponse()
+        r.content = "content of ${req.path}"
+        r
+    })
+    client.setOnWriteTextFile({ req => EmptyResult() })
+    client.setOnCreateTerminal({ req =>
+        let r = CreateTerminalResponse()
+        r.terminalId = "term_" + req.command
+        r
+    })
+    client.setOnTerminalOutput({ req =>
+        let r = TerminalOutputResponse()
+        r.output = "out of ${req.terminalId}"
+        r
+    })
+    client.setOnTerminalWaitForExit({ req =>
+        let r = WaitForTerminalExitResponse()
+        r.exitCode = Some(0)
+        r
+    })
+    client.setOnTerminalKill({ req => EmptyResult() })
+    client.setOnTerminalRelease({ req => EmptyResult() })
+
+    match (client.newSession("/tmp/proj")) {
+        case Result.Ok(resp) => ()
+        case Result.Err(e) => return @Fail("newSession failed: ${e}")
+    }
+    let sid = "sess_typed"
+
+    // request_permission
+    let toolCall = ToolCallUpdate()
+    toolCall.toolCallId = "call_1"
+    toolCall.title = Some("Run")
+    toolCall.kind = Some(ToolKindExecute)
+    toolCall.status = Some(ToolStatusPending)
+    let options = ArrayList<PermissionOption>()
+    options.add(PermissionOption("allow-once", "Allow once", "allow_once"))
+    match (agent.requestPermission(sid, toolCall, options)) {
+        case Result.Ok(resp) =>
+            @Expect(resp.outcome.outcome, "selected")
+            @Expect(resp.outcome.optionId, Some("allow-once"))
+        case Result.Err(e) => return @Fail("requestPermission failed: ${e}")
+    }
+
+    // fs
+    let rd = ReadTextFileRequest()
+    rd.sessionId = sid
+    rd.path = "/tmp/a.txt"
+    match (agent.readTextFile(rd)) {
+        case Result.Ok(resp) => @Expect(resp.content, "content of /tmp/a.txt")
+        case Result.Err(e) => return @Fail("readTextFile failed: ${e}")
+    }
+    let wr = WriteTextFileRequest()
+    wr.sessionId = sid
+    wr.path = "/tmp/a.txt"
+    wr.content = "hi"
+    match (agent.writeTextFile(wr)) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("writeTextFile failed: ${e}")
+    }
+
+    // terminal
+    let ct = CreateTerminalRequest()
+    ct.sessionId = sid
+    ct.command = "ls"
+    match (agent.createTerminal(ct)) {
+        case Result.Ok(resp) => @Expect(resp.terminalId, "term_ls")
+        case Result.Err(e) => return @Fail("createTerminal failed: ${e}")
+    }
+    let tid1 = TerminalIdRequest()
+    tid1.sessionId = sid
+    tid1.terminalId = "t1"
+    match (agent.terminalOutput(tid1)) {
+        case Result.Ok(resp) => @Expect(resp.output, "out of t1")
+        case Result.Err(e) => return @Fail("terminalOutput failed: ${e}")
+    }
+    let tid2 = TerminalIdRequest()
+    tid2.sessionId = sid
+    tid2.terminalId = "t1"
+    match (agent.terminalWaitForExit(tid2)) {
+        case Result.Ok(resp) => @Expect(resp.exitCode, Some(0))
+        case Result.Err(e) => return @Fail("terminalWaitForExit failed: ${e}")
+    }
+    let tid3 = TerminalIdRequest()
+    tid3.sessionId = sid
+    tid3.terminalId = "t1"
+    match (agent.terminalKill(tid3)) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("terminalKill failed: ${e}")
+    }
+    let tid4 = TerminalIdRequest()
+    tid4.sessionId = sid
+    tid4.terminalId = "t1"
+    match (agent.terminalRelease(tid4)) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("terminalRelease failed: ${e}")
+    }
+    client.close()
+    agent.close()
+}
+
+// ===================== 1.6 cwd 绝对路径校验 / 版本协商 =====================
+
+@Test
+public func agent_rejects_relative_cwd() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.setPromptHandler({ ctx => PromptResponse(StopReasonEndTurn) })
+    agent.start()
+    let client = AcpClient(pair.a())
+    match (client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("connect failed: ${e}")
+    }
+    // 相对路径 cwd → -32602
+    match (client.newSession("relative/dir")) {
+        case Result.Ok(_) => @Fail("relative cwd must be rejected")
+        case Result.Err(e) => @Expect(e.contains("-32602"), true)
+    }
+    client.close()
+    agent.close()
+}
+
+@Test
+public func agent_protocol_version_negotiation() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.start()
+    let client = AcpClient(pair.a())
+    // 客户端请求 v1 → agent 回 v1
+    match (client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())) {
+        case Result.Ok(resp) => @Expect(resp.protocolVersion, 1)
+        case Result.Err(e) => return @Fail("connect failed: ${e}")
+    }
+    client.close()
+    agent.close()
+}
+
+// ===================== 阶段2 Elicitation 双端 =====================
+
+func makeElicitCaps(form: Bool, url: Bool): ClientCapabilities {
+    let caps = ClientCapabilities()
+    let elic = ElicitationCapabilities()
+    if (form) { elic.form = Some(EmptyCapability()) }
+    if (url) { elic.url = Some(EmptyCapability()) }
+    caps.elicitation = Some(elic)
+    caps
+}
+
+@Test
+public func agent_elicitation_requires_advertised_mode() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.start()
+    let client = AcpClient(pair.a())
+    // Client 只广告 form
+    match (client.connect(Implementation("test-client", "1.0.0"), makeElicitCaps(true, false))) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("connect failed: ${e}")
+    }
+    // url 未广告 → 拒绝（-32602 语义）
+    let u = CreateElicitationRequest.urlMode("sess_1", "授权", "https://example.com")
+    match (agent.createElicitation(u)) {
+        case Result.Ok(_) => @Fail("url mode must be rejected when not advertised")
+        case Result.Err(e) => @Expect(e.contains("-32602"), true)
+    }
+    // 未握手 clientCapabilities 时也拒绝
+    client.close()
+    agent.close()
+    let pair2 = PipePair()
+    let agent2 = AcpAgent(pair2.b(), "test-agent", "0.1.0")
+    agent2.start()
+    let client2 = AcpClient(pair2.a())
+    // 先不 connect 直接 newSession 失败……改用未广告普通 caps（elicitation=None 等价未握手）
+    match (client2.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("connect2 failed: ${e}")
+    }
+    match (agent2.createElicitation(CreateElicitationRequest.form("s", "x", ElicitationSchema()))) {
+        case Result.Ok(_) => @Fail("form mode must be rejected when elicitation not advertised")
+        case Result.Err(e) => @Expect(e.contains("-32602"), true)
+    }
+    client2.close()
+    agent2.close()
+}
+
+@Test
+public func agent_elicitation_form_accept_roundtrip() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.start()
+    let client = AcpClient(pair.a())
+    match (client.connect(Implementation("test-client", "1.0.0"), makeElicitCaps(true, true))) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("connect failed: ${e}")
+    }
+    // Client 类型化处理：返回 accept + 内容
+    client.setOnElicitationCreate({ req =>
+        let content = HashMap<String, JsonValue>()
+        content["strategy"] = JsonValue.String("balanced")
+        CreateElicitationResponse.accepted(content: Some(JsonValue.Map(content)))
+    })
+    // Agent 发起 form 请求
+    let schema = ElicitationSchema.of([("strategy", ElicitationPropertySchema.singleSelect(
+        ArrayList<String>(["conservative", "balanced"])))], required: Some(ArrayList<String>(["strategy"])))
+    let req = CreateElicitationRequest.form("sess_1", "如何重构？", schema, toolCallId: Some("call_1"))
+    match (agent.createElicitation(req)) {
+        case Result.Ok(resp) =>
+            @Expect(resp.action, "accept")
+            match (resp.content) {
+                case Some(JsonValue.Map(m)) =>
+                    match (m.get("strategy")) {
+                        case Some(JsonValue.String(s)) => @Expect(s, "balanced")
+                        case _ => @Fail("content.strategy missing")
+                    }
+                case _ => @Fail("accept content missing")
+            }
+        case Result.Err(e) => @Fail("createElicitation failed: ${e}")
+    }
+    // decline / cancel 路径
+    client.setOnElicitationCreate({ req => CreateElicitationResponse.declined() })
+    match (agent.createElicitation(req)) {
+        case Result.Ok(resp) => @Expect(resp.action, "decline")
+        case Result.Err(e) => @Fail("decline roundtrip failed: ${e}")
+    }
+    client.setOnElicitationCreate({ req => CreateElicitationResponse.cancelled() })
+    match (agent.createElicitation(req)) {
+        case Result.Ok(resp) => @Expect(resp.action, "cancel")
+        case Result.Err(e) => @Fail("cancel roundtrip failed: ${e}")
+    }
+    client.close()
+    agent.close()
+}
+
+@Test
+public func agent_elicitation_url_and_complete() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.start()
+    let client = AcpClient(pair.a())
+    match (client.connect(Implementation("test-client", "1.0.0"), makeElicitCaps(true, true))) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("connect failed: ${e}")
+    }
+    // url 模式：Client 同意打开（accept 无内容）
+    client.setOnElicitationCreate({ req =>
+        @Expect(req.mode, "url")
+        @Expect(req.url, Some("https://example.com/oauth"))
+        @Expect(req.elicitationId, Some("oauth-001"))
+        CreateElicitationResponse.accepted()
+    })
+    let req = CreateElicitationRequest.urlMode("sess_1", "授权", "https://example.com/oauth",
+        elicitationId: Some("oauth-001"))
+    match (agent.createElicitation(req)) {
+        case Result.Ok(resp) => @Expect(resp.action, "accept")
+        case Result.Err(e) => @Fail("url elicitation failed: ${e}")
+    }
+    // 外部交互完成 → elicitation/complete 通知送达 Client
+    let done = ArrayList<String>()
+    client.setOnElicitationComplete({ id => done.add(id) })
+    agent.elicitationComplete("oauth-001")
+    var tries: Int64 = 0
+    while (done.size == 0 && tries < 100) {
+        tries++
+        sleep(10 * Duration.millisecond)
+    }
+    @Expect(done.size, 1)
+    @Expect(done[0], "oauth-001")
+    client.close()
+    agent.close()
 }

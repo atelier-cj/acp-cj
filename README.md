@@ -98,6 +98,8 @@ main() {
 | `setOnSetMode / setOnSetConfigOption` | 模式 / 配置项钩子（可选能力） |
 | `setOnListSessions / setOnLoadSession / setOnDeleteSession` | 会话管理钩子 |
 | `sessionUpdate(sessionId, update)` | 主动推送 session/update 通知 |
+| `createElicitation(req)` / `elicitationComplete(id)` | Elicitation：请求表单/URL 引导输入（未广告模式拒绝）+ 完成通知 |
+| `registerExtensionMethod(method, h)` / `sendExtensionNotification(method)` | `_*` 扩展方法注册 / 扩展通知发送 |
 | `requestPermission / createTerminal / readTextFile …` | 反向调用 Client 的 terminal/fs/permission 方法 |
 | `serve() / start() / close()` | 生命周期 |
 
@@ -112,7 +114,9 @@ main() {
 | `setMode / setConfigOption` | 模式 / 配置项 |
 | `authenticate / logout` | 认证 |
 | `setOnSessionUpdate(cb)` | 流式通知回调 |
-| `on(method, handler)` | 处理 Agent 反向请求（request_permission 等） |
+| `on(method, handler)` | 处理 Agent 反向请求（request_permission 等，通用 JsonValue 版） |
+| `setOnRequestPermission/setOnReadTextFile/…/setOnElicitationCreate` | 反向请求类型化 handler（自动解析参数与响应） |
+| `extensionCall(method, params)` / `onNotification(method, cb)` | 调用 Agent `_*` 扩展方法 / 订阅扩展通知 |
 
 ### Transport
 
@@ -155,9 +159,10 @@ export XDG_DATA_HOME=$PWD/.opencode-data
 | `session/set_mode` / `session/set_config_option` | ✅（可选能力） |
 | `authenticate` / `logout` | ✅ |
 | `session/request_permission`（Agent→Client 反向调用） | ✅ |
-| `terminal/*` `fs/*`（Agent→Client 反向调用便捷封装） | ✅ |
+| `terminal/*` `fs/*`（Agent→Client 反向调用便捷封装，双端类型化） | ✅ |
 | `$/cancel_request` | ✅ |
-| `elicitation/create` · `elicitation/complete` | ❌ 未实现（仅 `clientCapabilities.elicitation` 透传） |
+| 扩展方法 `_*` 请求/通知（双向） | ✅（`registerExtensionMethod` / `extensionCall` / `onNotification`） |
+| `elicitation/create` · `elicitation/complete` | ✅（form/url 双模式 + 能力门控，见 [roadmap](docs/roadmap.md)） |
 
 > 📋 完整对照 ACP v1 规范的逐项支持矩阵、差距清单与 Roadmap 见 [支持矩阵](docs/support.md)。
 
