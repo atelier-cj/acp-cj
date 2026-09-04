@@ -198,11 +198,35 @@ public class ClientSessionCapabilities <: JsonSerializable & JsonDeserializable<
     }
 }
 
+// Elicitation 能力：省略/null = 不支持；`{}` 空对象 = 支持该模式（form/url 各自显式声明）
+public class ElicitationCapabilities <: JsonSerializable & JsonDeserializable<ElicitationCapabilities> {
+    public var form: ?EmptyCapability = None
+    public var url: ?EmptyCapability = None
+    public var _meta: ?JsonValue = None
+    public init() {}
+    public func toJson(w: JsonWriter): Unit {
+        w.startObject()
+        if (let Some(v) <- this.form) { w.writeName("form").writeValue(v) }
+        if (let Some(v) <- this.url) { w.writeName("url").writeValue(v) }
+        if (let Some(v) <- this._meta) { w.writeName("_meta").writeValue(v) }
+        w.endObject()
+    }
+    public static func fromJson(r: JsonReader): ElicitationCapabilities {
+        let res = ElicitationCapabilities()
+        fromJsonObject(r,
+            ("form", {=> res.form = r.readValue<Option<EmptyCapability>>()}),
+            ("url", {=> res.url = r.readValue<Option<EmptyCapability>>()}),
+            ("_meta", {=> res._meta = r.readValue<Option<JsonValue>>()})
+        )
+        res
+    }
+}
+
 public class ClientCapabilities <: JsonSerializable & JsonDeserializable<ClientCapabilities> {
     public var fs = FileSystemCapabilities()
     public var terminal: Bool = false
     public var auth = AuthCapabilities()
-    public var elicitation: ?JsonValue = None
+    public var elicitation: ?ElicitationCapabilities = None
     public var session: ?ClientSessionCapabilities = None
     public init() {}
     public func toJson(w: JsonWriter): Unit {
@@ -210,7 +234,7 @@ public class ClientCapabilities <: JsonSerializable & JsonDeserializable<ClientC
         w.writeName("fs").writeValue(this.fs)
         w.writeName("terminal").writeValue(this.terminal)
         w.writeName("auth").writeValue(this.auth)
-        if (let Some(v) <- this.elicitation) { w.writeName("elicitation"); v.toJson(w) }
+        if (let Some(v) <- this.elicitation) { w.writeName("elicitation").writeValue(v) }
         if (let Some(v) <- this.session) { w.writeName("session").writeValue(v) }
         w.endObject()
     }
@@ -220,7 +244,7 @@ public class ClientCapabilities <: JsonSerializable & JsonDeserializable<ClientC
             ("fs", {=> res.fs = r.readValue<FileSystemCapabilities>()}),
             ("terminal", {=> res.terminal = r.readValue<Bool>()}),
             ("auth", {=> res.auth = r.readValue<AuthCapabilities>()}),
-            ("elicitation", {=> res.elicitation = r.readValue<Option<JsonValue>>()}),
+            ("elicitation", {=> res.elicitation = r.readValue<Option<ElicitationCapabilities>>()}),
             ("session", {=> res.session = r.readValue<Option<ClientSessionCapabilities>>()})
         )
         res

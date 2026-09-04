@@ -359,3 +359,256 @@ public func types_meta_roundtrip_on_requests() {
     let cnRt = roundTrip(cn)
     @Expect(cnRt._meta.isSome(), true)
 }
+
+// ===================== 阶段2 Elicitation 类型层 =====================
+
+func buildStrategySchema(): ElicitationSchema {
+    let strategy = ElicitationPropertySchema.singleSelect(
+        ArrayList<String>(["conservative", "balanced", "aggressive"]),
+        title: Some("策略"))
+    strategy.description = Some("重构策略")
+    let detail = ElicitationPropertySchema.string()
+    detail.minLength = Some(3)
+    detail.maxLength = Some(100)
+    detail.format = Some(StringFormatDate)
+    detail.strDefault = Some("2026-01-01")
+    let count = ElicitationPropertySchema.integer()
+    count.intMinimum = Some(1)
+    count.intMaximum = Some(10)
+    count.intDefault = Some(3)
+    let ratio = ElicitationPropertySchema.number()
+    ratio.numDefault = Some(0.5)
+    let verbose = ElicitationPropertySchema.boolean()
+    verbose.boolDefault = Some(true)
+    let tags = ElicitationPropertySchema.multiSelect(ArrayList<String>(["a", "b"]))
+    tags.arrDefault = Some(ArrayList<String>(["a"]))
+    let titled = EnumOption("fast", "快速", description: Some("速度优先"))
+    let titledOpt = ElicitationPropertySchema.titledSelect(ArrayList<EnumOption>([titled]), title: Some("模式"))
+    let msel = ElicitationPropertySchema.titledMultiSelect(ArrayList<EnumOption>([EnumOption("x", "X")]))
+    ElicitationSchema.of([
+        ("strategy", strategy),
+        ("detail", detail),
+        ("count", count),
+        ("ratio", ratio),
+        ("verbose", verbose),
+        ("tags", tags),
+        ("titledOpt", titledOpt),
+        ("msel", msel),
+    ], required: Some(ArrayList<String>(["strategy"])))
+}
+
+@Test
+public func types_elicitation_schema_roundtrip() {
+    let schema = buildStrategySchema()
+    let rt = roundTrip(schema)
+    @Expect(rt.`type`, "object")
+    @Expect(rt.properties.size, 8)
+    // 单选 enum
+    match (rt.properties.get("strategy")) {
+        case Some(p) =>
+            @Expect(p.`type`, "string")
+            match (p.enumValues) {
+                case Some(list) =>
+                    @Expect(list.size, 3)
+                    @Expect(list[0], "conservative")
+                case None => @Fail("enumValues lost")
+            }
+            @Expect(p.title, Some("策略"))
+            @Expect(p.description, Some("重构策略"))
+        case None => @Fail("strategy property lost")
+    }
+    // string 约束 + format + default
+    match (rt.properties.get("detail")) {
+        case Some(p) =>
+            @Expect(p.minLength, Some(3))
+            @Expect(p.maxLength, Some(100))
+            @Expect(p.format, Some("date"))
+            @Expect(p.strDefault, Some("2026-01-01"))
+        case None => @Fail("detail lost")
+    }
+    // integer
+    match (rt.properties.get("count")) {
+        case Some(p) =>
+            @Expect(p.intMinimum, Some(1))
+            @Expect(p.intMaximum, Some(10))
+            @Expect(p.intDefault, Some(3))
+        case None => @Fail("count lost")
+    }
+    // number
+    match (rt.properties.get("ratio")) {
+        case Some(p) =>
+            match (p.numDefault) {
+                case Some(v) => @Expect(v > 0.49 && v < 0.51, true)
+                case None => @Fail("numDefault lost")
+            }
+        case None => @Fail("ratio lost")
+    }
+    // boolean
+    match (rt.properties.get("verbose")) {
+        case Some(p) => @Expect(p.boolDefault, Some(true))
+        case None => @Fail("verbose lost")
+    }
+    // multi-select（untitled）
+    match (rt.properties.get("tags")) {
+        case Some(p) =>
+            @Expect(p.`type`, "array")
+            match (p.strEnum) {
+                case Some(list) => @Expect(list.size, 2)
+                case None => @Fail("strEnum lost")
+            }
+            match (p.arrDefault) {
+                case Some(list) => @Expect(list[0], "a")
+                case None => @Fail("arrDefault lost")
+            }
+        case None => @Fail("tags lost")
+    }
+    // titled select oneOf
+    match (rt.properties.get("titledOpt")) {
+        case Some(p) =>
+            match (p.titledOptions) {
+                case Some(list) =>
+                    @Expect(list.size, 1)
+                    @Expect(list[0].`const`, "fast")
+                    @Expect(list[0].title, "快速")
+                case None => @Fail("titledOptions lost")
+            }
+        case None => @Fail("titledOpt lost")
+    }
+    // titled multi-select items(anyOf)
+    match (rt.properties.get("msel")) {
+        case Some(p) =>
+            @Expect(p.itemsType, "titled")
+            match (p.titledItems) {
+                case Some(list) =>
+                    @Expect(list.size, 1)
+                    @Expect(list[0].`const`, "x")
+                case None => @Fail("titledItems lost")
+            }
+        case None => @Fail("msel lost")
+    }
+    match (rt.required) {
+        case Some(list) =>
+            @Expect(list.size, 1)
+            @Expect(list[0], "strategy")
+        case None => @Fail("required lost")
+    }
+}
+
+@Test
+public func types_elicitation_request_response_roundtrip() {
+    // form（session 域）
+    let f = CreateElicitationRequest.form("sess_1", "如何重构？", buildStrategySchema())
+    f.toolCallId = Some("call_9")
+    f._meta = Some(JsonValue.String("m"))
+    let frt = roundTrip(f)
+    @Expect(frt.mode, "form")
+    @Expect(frt.sessionId, Some("sess_1"))
+    @Expect(frt.toolCallId, Some("call_9"))
+    @Expect(frt.requestedSchema.isSome(), true)
+    match (frt.requestedSchema) {
+        case Some(s) => @Expect(s.properties.size, 8)
+        case None => @Fail("requestedSchema lost")
+    }
+
+    // form（request 域）
+    let fr = CreateElicitationRequest.formForRequest(JsonValue.Number(42.0), "输入", buildStrategySchema())
+    let frrt = roundTrip(fr)
+    @Expect(frrt.mode, "form")
+    match (frrt.requestId) {
+        case Some(JsonValue.Number(n)) => @Expect(Int64(n), 42)
+        case _ => @Fail("requestId lost")
+    }
+    @Expect(frrt.sessionId.isNone(), true)
+
+    // url（session 域）
+    let u = CreateElicitationRequest.urlMode("sess_1", "授权", "https://example.com/oauth",
+        elicitationId: Some("oauth-001"))
+    let urt = roundTrip(u)
+    @Expect(urt.mode, "url")
+    @Expect(urt.url, Some("https://example.com/oauth"))
+    @Expect(urt.elicitationId, Some("oauth-001"))
+
+    // 响应三态
+    let content = HashMap<String, JsonValue>()
+    content["strategy"] = JsonValue.String("balanced")
+    let acc = CreateElicitationResponse.accepted(content: Some(JsonValue.Map(content)))
+    let ar = roundTrip(acc)
+    @Expect(ar.action, "accept")
+    match (ar.content) {
+        case Some(JsonValue.Map(m)) =>
+            match (m.get("strategy")) {
+                case Some(JsonValue.String(s)) => @Expect(s, "balanced")
+                case _ => @Fail("content lost")
+            }
+        case _ => @Fail("accept content lost")
+    }
+    @Expect(roundTrip(CreateElicitationResponse.declined()).action, "decline")
+    @Expect(roundTrip(CreateElicitationResponse.cancelled()).action, "cancel")
+
+    // complete 通知
+    let cn = CompleteElicitationNotification("oauth-001")
+    let cr = roundTrip(cn)
+    @Expect(cr.elicitationId, "oauth-001")
+}
+
+@Test
+public func types_elicitation_unknown_preserved() {
+    // 未知属性类型：raw 原样保留
+    let rawProp = "{\"type\":\"_custom\",\"payload\":{\"k\":\"v\"}}"
+    let pv = JsonValue.parse(rawProp)
+    let propVar = reparse<ElicitationPropertySchema>(pv)
+    @Expect(propVar.`type`, "_custom")
+    @Expect(propVar.raw.isSome(), true)
+    let back = JsonValue.fromObject(propVar).stringify()
+    @Expect(back.contains("_custom"), true)
+    @Expect(back.contains("payload"), true)
+
+    // 未知 mode：请求原样保留
+    let rawReq = "{\"message\":\"hi\",\"mode\":\"_weird\",\"x\":1}"
+    let req = reparse<CreateElicitationRequest>(JsonValue.parse(rawReq))
+    @Expect(req.mode, "_weird")
+    @Expect(req.raw.isSome(), true)
+    @Expect(JsonValue.fromObject(req).stringify().contains("_weird"), true)
+
+    // 未知 action：响应原样保留
+    let rawResp = "{\"action\":\"_future\",\"n\":2}"
+    let resp = reparse<CreateElicitationResponse>(JsonValue.parse(rawResp))
+    @Expect(resp.action, "_future")
+    @Expect(resp.raw.isSome(), true)
+}
+
+@Test
+public func types_elicitation_capabilities_roundtrip() {
+    // 默认：不广告
+    let caps = ClientCapabilities()
+    @Expect(caps.elicitation.isNone(), true)
+    let raw = JsonValue.fromObject(caps).stringify()
+    @Expect(raw.contains("elicitation"), false)
+    // form+url 广告
+    let caps2 = ClientCapabilities()
+    let elic = ElicitationCapabilities()
+    elic.form = Some(EmptyCapability())
+    elic.url = Some(EmptyCapability())
+    caps2.elicitation = Some(elic)
+    let rt = roundTrip(caps2)
+    match (rt.elicitation) {
+        case Some(e) =>
+            @Expect(e.form.isSome(), true)
+            @Expect(e.url.isSome(), true)
+        case None => @Fail("elicitation capability lost")
+    }
+    // 仅 form
+    let caps3 = ClientCapabilities()
+    let e3 = ElicitationCapabilities()
+    e3.form = Some(EmptyCapability())
+    caps3.elicitation = Some(e3)
+    let rt3 = roundTrip(caps3)
+    match (rt3.elicitation) {
+        case Some(e) =>
+            @Expect(e.form.isSome(), true)
+            @Expect(e.url.isNone(), true)
+        case None => @Fail("elicitation capability lost")
+    }
+}
+
+
