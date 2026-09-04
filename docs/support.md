@@ -45,7 +45,7 @@
 | `initialize` | ✅ | 内置 | 版本协商 + `agentInfo`/`agentCapabilities`/`authMethods` 返回；握手后保存 `clientCapabilities` 供业务查询（§2 反向调用前能力检查） |
 | `authenticate` | ✅ | 内置 + `setOnAuthenticated` | methodId 白名单校验（须已广告且非 terminal 型，否则 `-32602`）+ 布尔门控 |
 | `logout` | ✅ | 内置 + `setOnLoggedOut` | 需广告 `agentCapabilities.auth.logout = {}` |
-| `session/new` | ✅ | 内置 + `setOnNewSession(sessionId, cwd)` | cwd 绝对路径校验（`Path.isAbsolute`，否则 `-32602`）；🟡 响应固定只有 `sessionId`，初始 `modes`/`configOptions` 见 §7-A5 跟踪项 |
+| `session/new` | ✅ | 内置 + `setOnNewSession(sessionId, cwd)` + `setInitialSessionState` | cwd 绝对路径校验（`Path.isAbsolute`，否则 `-32602`）；响应可携带初始 `modes`/`configOptions`（A5） |
 | `session/load` | ✅ | `setOnLoadSession`（异步重放 → complete/fail）+ `SessionStore` 持久化 | 重放 `session/update` 历史后再响应，与规范一致；需广告 `loadSession: true` |
 | `session/list` | ✅ | `setOnListSessions` | 需广告 `sessionCapabilities.list`；分页 cursor 由回调返回 |
 | `session/delete` | ✅ | `setOnDeleteSession` | 未找到会话回 `-32002`；需广告 `sessionCapabilities.delete` |
