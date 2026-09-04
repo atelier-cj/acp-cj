@@ -94,6 +94,9 @@ public class AcpAgent {
     public var capabilities = AgentCapabilities()
     public var authMethods = ArrayList<AuthMethod>()
     public var protocolVersion: Int64 = ProtocolVersionV1
+    // 握手时对端（Client）声明的能力：宿主可在 initialize 之后（session/new 等回调中）读取，
+    // 例如按 clientCapabilities.session.configOptions 决定是否下发 config options
+    public var clientCapabilities = ClientCapabilities()
     // 认证门控：true 表示 session/new 前必须通过 authenticate（或终端登录）
     public var authRequired: Bool = false
     private var authenticated: Bool = false
@@ -173,6 +176,10 @@ public class AcpAgent {
     private func handleInitialize(ctx: HandlerContext): HandlerResult {
         let params = ctx.getParams<InitializeRequest>()
         let requested = params?.protocolVersion ?? ProtocolVersionV1
+        // 记录对端能力（供宿主在后续回调中按能力决策）
+        if (let Some(caps) <- params?.clientCapabilities) {
+            this.clientCapabilities = caps
+        }
         let resp = InitializeResponse()
         resp.protocolVersion = if (requested == this.protocolVersion) { requested } else { this.protocolVersion }
         resp.agentInfo = Some(this.agentInfo)

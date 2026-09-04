@@ -561,3 +561,24 @@ public func client_terminal_login_exit_code() {
         case Result.Err(e) => @Fail("terminalLogin failed: ${e}")
     }
 }
+
+// initialize 后：AcpAgent 记录对端 clientCapabilities（宿主按能力决策的读取点）
+@Test
+public func agent_records_client_capabilities() {
+    let pair = PipePair()
+    let agent = makeEchoAgent(pair)
+    let client = AcpClient(pair.a())
+
+    // 声明支持 session.configOptions（select 之外的能力仅在此探测位）
+    let caps = ClientCapabilities()
+    caps.session = Some(ClientSessionCapabilities())
+    let initResult = client.connect(Implementation("test-client", "1.0.0"), caps)
+    match (initResult) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("connect failed: ${e}")
+    }
+    // 宿主视角：握手后（session/new 前）应能读到对端声明
+    @Expect(agent.clientCapabilities.session.isSome(), true)
+    client.close()
+    agent.close()
+}
