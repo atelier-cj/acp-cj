@@ -828,3 +828,40 @@ public func agent_typed_reverse_handlers_roundtrip() {
     client.close()
     agent.close()
 }
+
+// ===================== 1.6 cwd 绝对路径校验 / 版本协商 =====================
+
+@Test
+public func agent_rejects_relative_cwd() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.setPromptHandler({ ctx => PromptResponse(StopReasonEndTurn) })
+    agent.start()
+    let client = AcpClient(pair.a())
+    match (client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("connect failed: ${e}")
+    }
+    // 相对路径 cwd → -32602
+    match (client.newSession("relative/dir")) {
+        case Result.Ok(_) => @Fail("relative cwd must be rejected")
+        case Result.Err(e) => @Expect(e.contains("-32602"), true)
+    }
+    client.close()
+    agent.close()
+}
+
+@Test
+public func agent_protocol_version_negotiation() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.start()
+    let client = AcpClient(pair.a())
+    // 客户端请求 v1 → agent 回 v1
+    match (client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())) {
+        case Result.Ok(resp) => @Expect(resp.protocolVersion, 1)
+        case Result.Err(e) => return @Fail("connect failed: ${e}")
+    }
+    client.close()
+    agent.close()
+}

@@ -312,3 +312,50 @@ public func session_notification_roundtrip() {
     @Expect(back.sessionId, "sess_abc")
     @Expect(back.update.sessionUpdate, SessionUpdateAgentMessageChunk)
 }
+
+// ===================== 1.6 _meta 收发 =====================
+
+@Test
+public func types_meta_roundtrip_on_requests() {
+    // NewSessionRequest 带 _meta 往返
+    let req = NewSessionRequest()
+    req.cwd = "/tmp/proj"
+    let meta = HashMap<String, JsonValue>()
+    meta["traceId"] = JsonValue.String("abc-123")
+    req._meta = Some(JsonValue.Map(meta))
+    let rt = roundTrip(req)
+    match (rt._meta) {
+        case Some(m) =>
+            match (m["traceId"]) {
+                case Some(JsonValue.String(s)) => @Expect(s, "abc-123")
+                case _ => @Fail("_meta.traceId missing after roundtrip")
+            }
+        case None => @Fail("_meta lost after roundtrip")
+    }
+    // 无 _meta 时不序列化该字段
+    let req2 = SetSessionModeRequest()
+    req2.sessionId = "s"
+    req2.modeId = "code"
+    let raw = JsonValue.fromObject(req2).stringify()
+    @Expect(raw.contains("_meta"), false)
+
+    // AuthenticateRequest / SessionLifecycleRequest / CancelNotification 收 _meta
+    let auth = AuthenticateRequest()
+    auth.methodId = "m"
+    auth._meta = Some(JsonValue.Map(HashMap<String, JsonValue>()))
+    let authRt = roundTrip(auth)
+    @Expect(authRt._meta.isSome(), true)
+
+    let lc = SessionLifecycleRequest()
+    lc.sessionId = "s1"
+    lc.cwd = "/tmp"
+    lc._meta = Some(JsonValue.String("x"))
+    let lcRt = roundTrip(lc)
+    @Expect(lcRt._meta.isSome(), true)
+
+    let cn = CancelNotification()
+    cn.sessionId = "s2"
+    cn._meta = Some(JsonValue.Boolean(true))
+    let cnRt = roundTrip(cn)
+    @Expect(cnRt._meta.isSome(), true)
+}

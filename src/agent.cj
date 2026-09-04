@@ -4,6 +4,7 @@ import jsonvalue.*
 import ystyle::jsonrpc.{JsonRpcServer, Transport, NewlineFraming, HandlerContext, HandlerResult, Result, JsonRpcError, RequestId}
 import std.collection.*
 import std.sync.*
+import std.fs.Path
 import stdx.encoding.json.stream.*
 import sonyflake.*
 import std.random.Random
@@ -246,6 +247,15 @@ public class AcpAgent {
         }
         if (params.cwd.isEmpty()) {
             return HandlerResult.err(INVALID_PARAMS, "cwd must be an absolute path")
+        }
+        // 1.6 A1：规范要求 cwd 为绝对路径
+        let absOk = try {
+            Path(params.cwd).isAbsolute()
+        } catch (e: Exception) {
+            false
+        }
+        if (!absOk) {
+            return HandlerResult.err(INVALID_PARAMS, "cwd must be an absolute path: ${params.cwd}")
         }
         if (!this.isAuthenticated()) {
             // auth_required：-32000，data 携带 authMethods
