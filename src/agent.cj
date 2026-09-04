@@ -13,6 +13,17 @@ import acp.transport.*
 
 // ===================== 回调类型 =====================
 
+/// 会话初始状态：session/new 响应中携带的 modes / configOptions（A5）
+public class SessionInitialState {
+    public var modes: ?SessionModeState = None
+    public var configOptions: ?ArrayList<SessionConfigOption> = None
+    public init(modes!: ?SessionModeState = None,
+                configOptions!: ?ArrayList<SessionConfigOption> = None) {
+        this.modes = modes
+        this.configOptions = configOptions
+    }
+}
+
 public type NewSessionCallback = (String /*sessionId*/, String /*cwd*/) -> Unit
 public type CancelCallback = (String /*sessionId*/) -> Unit
 public type CloseCallback = (String /*sessionId*/) -> Unit
@@ -29,6 +40,10 @@ public type CancelRequestCallback = (String /*requestId 字符串化*/) -> Unit
 /// 扩展方法处理器：入参为请求 params（原始 JsonValue），返回 Some(result) 作为响应结果；
 /// 返回 None 表示未处理（响应 -32601 Method not found）。
 public type ExtensionHandler = (JsonValue /*params*/) -> ?JsonValue
+
+/// 会话初始状态处理器：session/new 时按请求内容构造初始 modes/configOptions；
+/// 返回 None 表示不带初始状态（响应维持仅 sessionId）。
+public type SessionInitialStateHandler = (NewSessionRequest /*params*/) -> ?SessionInitialState
 
 /**
  * PromptContext：一次 prompt 回合的执行上下文。
@@ -126,6 +141,7 @@ public class AcpAgent {
     // 业务钩子
     private var promptHandler: ?PromptHandler = None
     private var onNewSessionCb: ?NewSessionCallback = None
+    private var initialSessionStateCb: ?SessionInitialStateHandler = None
     private var onCancelCb: ?CancelCallback = None
     private var onCloseCb: ?CloseCallback = None
     private var listSessionsCb: ?ListSessionsCallback = None
@@ -153,6 +169,12 @@ public class AcpAgent {
 
     public func setPromptHandler(handler: PromptHandler): Unit { this.promptHandler = Some(handler) }
     public func setOnNewSession(cb: NewSessionCallback): Unit { this.onNewSessionCb = Some(cb) }
+
+    /// 注册会话初始状态处理器：session/new 响应携带 modes/configOptions（A5）。
+    /// load/resume 响应由对应回调自行构造（LoadSessionResponse/ResumeSessionResponse 已可带）。
+    public func setInitialSessionState(cb: SessionInitialStateHandler): Unit {
+        this.initialSessionStateCb = Some(cb)
+    }
     public func setOnCancel(cb: CancelCallback): Unit { this.onCancelCb = Some(cb) }
     public func setOnClose(cb: CloseCallback): Unit { this.onCloseCb = Some(cb) }
     public func setOnListSessions(cb: ListSessionsCallback): Unit { this.listSessionsCb = Some(cb) }
@@ -263,6 +285,15 @@ public class AcpAgent {
         if (let Some(cb) <- this.onNewSessionCb) { cb(sessionId, params.cwd) }
         let resp = NewSessionResponse()
         resp.sessionId = sessionId
+        // A5：会话初始状态（modes/configOptions）经钩子注入
+        if (let Some(cb) <- this.initialSessionStateCb) {
+            match (cb(params)) {
+                case Some(st) =>
+                    resp.modes = st.modes
+                    resp.configOptions = st.configOptions
+                case None => ()
+            }
+        }
         HandlerResult.ok(JsonValue.fromObject(resp))
     }
 

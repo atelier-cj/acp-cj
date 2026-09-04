@@ -1014,3 +1014,83 @@ public func agent_elicitation_url_and_complete() {
     client.close()
     agent.close()
 }
+
+// ===================== A5 会话初始状态（NewSession 响应带 modes/configOptions） =====================
+
+func makeInitialStateStub(): SessionInitialState {
+    let st = SessionInitialState()
+    let modes = SessionModeState()
+    modes.currentModeId = "code"
+    modes.availableModes.add(SessionMode("code", "Code"))
+    modes.availableModes.add(SessionMode("ask", "Ask"))
+    st.modes = Some(modes)
+    let model = SessionConfigOption("model", "Model")
+    model.`type` = "select"
+    let opt1 = SessionConfigSelectOption()
+    opt1.value = "deepseek"
+    opt1.name = "DeepSeek"
+    let optList = ArrayList<SessionConfigSelectOption>()
+    optList.add(opt1)
+    model.options = Some(optList)
+    model.currentValue = Some("deepseek")
+    st.configOptions = Some(ArrayList<SessionConfigOption>([model]))
+    st
+}
+
+@Test
+public func agent_new_session_returns_initial_state() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.setInitialSessionState({ req =>
+        @Expect(req.cwd, "/tmp/init-proj")
+        makeInitialStateStub()
+    })
+    agent.start()
+    let client = AcpClient(pair.a())
+    match (client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("connect failed: ${e}")
+    }
+    match (client.newSession("/tmp/init-proj")) {
+        case Result.Ok(resp) =>
+            @Expect(resp.sessionId.startsWith("sess_"), true)
+            match (resp.modes) {
+                case Some(m) =>
+                    @Expect(m.currentModeId, "code")
+                    @Expect(m.availableModes.size, 2)
+                    @Expect(m.availableModes[0].id, "code")
+                case None => @Fail("modes missing in newSession response")
+            }
+            match (resp.configOptions) {
+                case Some(opts) =>
+                    @Expect(opts.size, 1)
+                    @Expect(opts[0].id, "model")
+                    @Expect(opts[0].currentValue, Some("deepseek"))
+                case None => @Fail("configOptions missing in newSession response")
+            }
+        case Result.Err(e) => return @Fail("newSession failed: ${e}")
+    }
+    client.close()
+    agent.close()
+}
+
+@Test
+public func agent_new_session_without_initial_state_handler() {
+    // 无初始状态钩子时：响应不带 modes/configOptions（既有行为保持）
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.start()
+    let client = AcpClient(pair.a())
+    match (client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("connect failed: ${e}")
+    }
+    match (client.newSession("/tmp/proj")) {
+        case Result.Ok(resp) =>
+            @Expect(resp.modes.isNone(), true)
+            @Expect(resp.configOptions.isNone(), true)
+        case Result.Err(e) => return @Fail("newSession failed: ${e}")
+    }
+    client.close()
+    agent.close()
+}

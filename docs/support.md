@@ -18,6 +18,7 @@
 >
 > **更新记录**：
 > - 2026-09-05 阶段1（P1/P2 框架项 A4/A2/E1/N1/C2/M1/A1/A3）+ 阶段2（Elicitation P0 全模块）完成，详见 [roadmap.md](roadmap.md)。
+> - 2026-09-05 A5 完成：`setInitialSessionState` 钩子（58 单测全绿，feat/jsonrpc-0.7.4 分支）。
 
 ---
 
@@ -150,7 +151,7 @@
 
 | 类型 | 支持 | 备注 |
 |------|------|------|
-| NewSession/Resume 响应：`modes(SessionModeState)`、`configOptions` | 🟡 | 类型齐（`SessionMode{id,name,desc}`、`SessionConfigOption`…），但 AcpAgent 响应路径无法填充（§7-A5） |
+| NewSession/Resume 响应：`modes(SessionModeState)`、`configOptions` | ✅ | `AcpAgent.setInitialSessionState` 钩子注入（load/resume 由各自回调自构响应）；无钩子时维持仅 sessionId |
 | `SessionInfo{sessionId,cwd,title,updatedAt,additionalDirectories}` | ✅ | session/list 用 |
 | McpServer（stdio/http/sse 三形态扁平字段收发） | 🟡 | 类型为扁平近似（command/args/env/type/url/headers），未按判别封闭；实际 MCP 连接=范围外 |
 | AuthMethod{id,name,description,type(agent/terminal),args,env} | ✅ | terminal 登录 `AcpClient.terminalLogin` 已实现（env 覆盖、args 追加、退出码判成功） |
@@ -219,7 +220,6 @@
 
 ### 剩余跟踪项（非缺口 / 后续规划）
 
-- **A5. 会话初始状态可返回**：`NewSessionResponse`/`LoadSessionResponse` 的 `modes`（availableModes）、`configOptions` 目前只能由业务方事后用 `current_mode_update`/`config_option_update` 通知补齐，握手响应内无法经钩子注入 —— 若 pi_bridge 需要「会话创建即带模式」再实现（钩子签名升级）。
 - **Streamable HTTP 传输**：官方 draft in progress（➖ 跟踪）。
 - **ACP v2 draft**：迁移评估（➖ 跟踪）。
 - **MCP 透传建立连接**（`session/new.mcpServers` 建立真实 MCP 子进程）：建议业务方组合 `mcp-cj` 实现，acp-cj 只保证字段收发与类型。
