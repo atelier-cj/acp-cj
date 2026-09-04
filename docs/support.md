@@ -14,7 +14,10 @@
 | ❌ | 未实现 |
 | ➖ | 规范未定稿 / 范围外（跟踪中） |
 
-> 状态为 **2026-09-05** 快照（master@`03c877e`，39 单测全绿 + 真实 e2e 通过）。后续实现每动一次，请同步更新本文件。
+> 状态为 **2026-09-05** 快照（`feat/acp-v1-complete` 分支，55 单测全绿 + 真实 e2e 通过）。后续实现每动一次，请同步更新本文件。
+>
+> **更新记录**：
+> - 2026-09-05 阶段1（P1/P2 框架项 A4/A2/E1/N1/C2/M1/A1/A3）+ 阶段2（Elicitation P0 全模块）完成，详见 [roadmap.md](roadmap.md)。
 
 ---
 
@@ -36,10 +39,10 @@
 
 | 方法 | 状态 | Agent 侧实现（AcpAgent） | 备注 |
 |------|------|--------------------------|------|
-| `initialize` | ✅ | 内置 | 版本协商 + `agentInfo`/`agentCapabilities`/`authMethods` 返回；🟡 未保留客户端能力供业务查询（见 §7-A4） |
-| `authenticate` | 🟡 | 内置 + `setOnAuthenticated` | 🟡 仅布尔门控置位，不校验 `methodId` 是否属于 `authMethods`、不拦截 terminal 型 methodId（规范：terminal 型不得走 `authenticate`） |
+| `initialize` | ✅ | 内置 | 版本协商 + `agentInfo`/`agentCapabilities`/`authMethods` 返回；握手后保存 `clientCapabilities` 供业务查询（§2 反向调用前能力检查） |
+| `authenticate` | ✅ | 内置 + `setOnAuthenticated` | methodId 白名单校验（须已广告且非 terminal 型，否则 `-32602`）+ 布尔门控 |
 | `logout` | ✅ | 内置 + `setOnLoggedOut` | 需广告 `agentCapabilities.auth.logout = {}` |
-| `session/new` | ✅ | 内置 + `setOnNewSession(sessionId, cwd)` | 🟡 响应固定只有 `sessionId`，无法携带初始 `modes`/`configOptions`（见 §7-A5）；cwd 只校验非空未校验「绝对路径」 |
+| `session/new` | ✅ | 内置 + `setOnNewSession(sessionId, cwd)` | cwd 绝对路径校验（`Path.isAbsolute`，否则 `-32602`）；🟡 响应固定只有 `sessionId`，初始 `modes`/`configOptions` 见 §7-A5 跟踪项 |
 | `session/load` | ✅ | `setOnLoadSession`（异步重放 → complete/fail）+ `SessionStore` 持久化 | 重放 `session/update` 历史后再响应，与规范一致；需广告 `loadSession: true` |
 | `session/list` | ✅ | `setOnListSessions` | 需广告 `sessionCapabilities.list`；分页 cursor 由回调返回 |
 | `session/delete` | ✅ | `setOnDeleteSession` | 未找到会话回 `-32002`；需广告 `sessionCapabilities.delete` |
@@ -53,7 +56,7 @@
 
 | 方法 | 状态 | Agent 侧封装 | Client 侧处理 | 备注 |
 |------|------|--------------|---------------|------|
-| `session/request_permission` | ✅ | `AcpAgent.requestPermission` | 通用 `on("session/request_permission", h)` | 🟡 Client 侧无类型化 handler（需自行解析 params） |
+| `session/request_permission` | ✅ | `AcpAgent.requestPermission` | `setOnRequestPermission(cb)` 类型化（或通用 `on`） |
 | `terminal/create` | ✅ | `createTerminal` | `on("terminal/create", h)` | 同上 |
 | `terminal/output` | ✅ | `terminalOutput` | `on("terminal/output", h)` | 同上 |
 | `terminal/wait_for_exit` | ✅ | `terminalWaitForExit` | `on("terminal/wait_for_exit", h)` | 同上 |
@@ -61,7 +64,7 @@
 | `terminal/kill` | ✅ | `terminalKill` | `on("terminal/kill", h)` | 同上 |
 | `fs/read_text_file` | ✅ | `readTextFile` | `on("fs/read_text_file", h)` | `line`/`limit` 参数齐 |
 | `fs/write_text_file` | ✅ | `writeTextFile` | `on("fs/write_text_file", h)` | 同上 |
-| `elicitation/create` | ❌ | 无 `createElicitation` API | 无类型（仅可 `on()` 裸 JSON 处理） | **最大缺口**：无请求/响应/表单 schema 类型族，见 §7-P0 |
+| `elicitation/create` | ✅ | `AcpAgent.createElicitation(req)`（form/url × session/request 域，未广告模式拒绝 `-32602`） | `setOnElicitationCreate(cb)` 类型化 | 类型族见 `types/elicitation.cj`，未知模式 raw 保留 |
 
 ### 2.3 通知（Notifications）
 
@@ -70,16 +73,16 @@
 | `session/update` | Agent→Client | ✅ | 见 §4 判别全集（10 种全支持） |
 | `session/cancel` | Client→Agent | ✅ | 置会话取消标志 → prompt 回 `cancelled` |
 | `$/cancel_request` | Client→Agent | ✅ | 按 JSON-RPC 请求 id 取消（`requestId` 映射到会话） |
-| `elicitation/complete` | Agent→Client | ❌ | 无类型、无发送 API（elicitation 一并缺失） |
-| 扩展通知 `_xxx` | 双向 | 🟡 | Agent 侧可收自定义通知（jsonrpc 层）；Client 侧通知分发只处理 `session/update`，扩展通知无订阅口 |
+| `elicitation/complete` | Agent→Client | ✅ | `AcpAgent.elicitationComplete(id)` 发送；Client `setOnElicitationComplete` 接收 |
+| 扩展通知 `_xxx` | 双向 | ✅ | Agent 发：`sendExtensionNotification`；Client 订阅：`onNotification(method, cb)`（可多订阅） |
 
 ### 2.4 扩展性（Extensibility 章节）
 
 | 能力 | 状态 | 备注 |
 |------|------|------|
-| `_meta` 透传 | 🟡 | 收发兼容（未知字段跳过/不序列化），但仅部分类型声明了 `_meta` 字段可编程访问（`InitializeRequest/Response`、`PromptRequest/Response`、`NewSessionResponse` 等），其余请求类型（如 `SetSessionModeRequest`、`DeleteSessionRequest`、`AuthMethod` 相关）未带 |
-| 自定义请求（`_foo` 方法） | 🟡 | Client 侧：`AcpClient.on("_foo", h)` ✅；Agent 侧：`AcpAgent` 未暴露扩展方法注册口（内部 `JsonRpcServer` 私有），业务方自定义 `_*` 方法无法注册 |
-| 自定义通知 | 🟡 | 同 2.3 扩展通知行 |
+| `_meta` 透传 | ✅ | 收发兼容（未知字段跳过）；22 个核心请求/响应类型已声明 `_meta` 字段可编程访问（含 terminal/fs/session 生命周期/认证请求与响应），剩余类型靠宽容透传 |
+| 自定义请求（`_foo` 方法） | ✅ | Agent：`registerExtensionMethod`（`_` 前缀强制）；Client：`extensionCall` / `on` |
+| 自定义通知 | ✅ | `sendExtensionNotification` / `onNotification` |
 | 自定义 capabilities 广告 | ✅ | 各 Capabilities 类均有 `_meta` 透传（Map），可附加自定义键 |
 
 ---
@@ -111,7 +114,7 @@
 | `terminal` | Client 支持全部 `terminal/*` | ✅ | |
 | `auth.terminal` | Client 支持 terminal 认证 | ✅ | |
 | `session.configOptions.boolean` | Client 支持布尔配置项 | ✅ | `ClientSessionCapabilities.configOptions` |
-| `elicitation.form` / `elicitation.url` | Client 支持表单/URL 引导输入 | 🟡 | 仅 `?JsonValue` 透传，无结构化类型（见 §7-P0） |
+| `elicitation.form` / `elicitation.url` | Client 支持表单/URL 引导输入 | ✅ | 结构化 `ElicitationCapabilities{form?, url?}`，省略/null=不支持、`{}`=支持 |
 
 ---
 
@@ -172,10 +175,10 @@
 | [Content](https://agentclientprotocol.com/protocol/v1/content) | ✅ | 5 种内容块 + annotations 透传 |
 | [File System](https://agentclientprotocol.com/protocol/v1/file-system) | ✅ | 双向封装齐 |
 | [Terminals](https://agentclientprotocol.com/protocol/v1/terminals) | ✅ | 5 方法双向封装齐（含 outputByteLimit、exitStatus） |
-| [Elicitation](https://agentclientprotocol.com/protocol/v1/elicitation) | ❌ | 见 §7-P0 |
+| [Elicitation](https://agentclientprotocol.com/protocol/v1/elicitation) | ✅ | form/url 双模式、session/request 双域、三态响应、complete 通知、能力门控；未知模式保留 raw |
 | [Session List](https://agentclientprotocol.com/protocol/v1/session-list) | ✅ | cursor 分页 + session_info_update 动态元数据 |
 | [Session Delete](https://agentclientprotocol.com/protocol/v1/session-delete) | ✅ | -32002 语义 |
-| [Extensibility](https://agentclientprotocol.com/protocol/v1/extensibility) | 🟡 | §2.4 |
+| [Extensibility](https://agentclientprotocol.com/protocol/v1/extensibility) | ✅ | §2.4 |
 | [Transports](https://agentclientprotocol.com/protocol/v1/transports) | ✅ | stdio + 自定义传输；Streamable HTTP 官方 draft ➖ |
 
 ### 错误码
@@ -197,37 +200,30 @@
 
 ## 7. 还差哪些（差距清单 / Roadmap）
 
-### P0 —— Elicitation（官方章节完整缺失，模块级缺口）
+> 状态：**P0（Elicitation）与 P1/P2 框架项已于 2026-09-05 全部完成**（55 单测全绿）。
+> 分阶段实施记录见 [roadmap.md](roadmap.md)。以下为剩余跟踪项。
 
-1. **类型族**：`elicitation/create` 请求/响应、`ElicitationSchema` 全家（string/number/integer/boolean/multi_select 属性 schema、enum、默认值、form/url 模式、`ElicitationContentValue`、accept/decline/cancel action、`CompleteElicitationNotification`、`ElicitationId`…）。
-2. **Agent 侧**：`AcpAgent.createElicitation(...)` 反向请求封装 + `elicitation/complete` 通知发送；表单/URL 两种 mode。
-3. **Client 侧**：`ClientCapabilities.elicitation.form/url` 结构化（当前 `?JsonValue` 透传）；`AcpClient.onElicitationCreate` 类型化 handler（现有 `on()` 裸 JSON 可先顶着）。
-4. 单测：schema 往返 + 双端流程（仿 terminal/fs 的既有测试模式）。
-   > 依赖：须等 `mcp-cj`/jsonvalue 侧无阻碍；UI 表单渲染仍属业务层（非库职责）。
+### 已解决（2026-09-05）
 
-### P1 —— 框架级能力缺口（影响「agent 规范符合性」）
+| 项 | 结果 |
+|----|------|
+| P0 Elicitation 模块（create/complete/能力/类型族） | ✅ `types/elicitation.cj` + `AcpAgent.createElicitation/elicitationComplete` + `AcpClient.setOnElicitationCreate/setOnElicitationComplete` |
+| A4 clientCapabilities 透出 | ✅ `AcpAgent.clientCapabilities` + `PromptContext.clientCaps()/canReadTextFile/canWriteTextFile/canUseTerminal` |
+| A2 authenticate 校验 | ✅ methodId 白名单 + 拒绝 terminal 型（-32602） |
+| E1 Agent 扩展方法注册口 | ✅ `registerExtensionMethod`（`_` 前缀强制）+ `AcpClient.extensionCall` |
+| N1 Client 扩展通知订阅口 | ✅ `AcpClient.onNotification` + `AcpAgent.sendExtensionNotification` |
+| C2 Client 反向方法类型化 handler | ✅ `setOnRequestPermission` 等 8 个 + `setOnElicitationCreate` |
+| M1 `_meta` 补齐 | ✅ 22 个请求/响应类型 |
+| A1 cwd 绝对路径校验 | ✅ `Path.isAbsolute`，-32602 |
+| A3 版本协商语义 | ✅ 测试固化（v1↔v1） |
 
-- **A4. clientCapabilities 不透出**：规范要求 Agent 调用 `fs/*`、`terminal/*`、`elicitation/create` 前**必须**检查 Client 能力声明，但 `AcpAgent` 未保存 initialize 收到的 `ClientCapabilities`，`PromptContext` 也无法查询。→ 建议：`AcpAgent.clientCapabilities`（握手后填充）+ `PromptContext.clientCapabilities`/查询方法 + 测试。
-- **A2. authenticate 校验弱**：不校验 `methodId ∈ authMethods`、不拒绝 terminal 型 methodId、`authenticate` 前 session 门控只靠布尔。→ 建议：methodId 白名单校验 + 错误码 `-32602`；terminal 方法收到 `authenticate` 请求应拒绝。
-- **E1. Agent 侧扩展方法注册口缺失**：`_foo` 自定义请求无法在 AcpAgent 注册（仅 client 侧 `on()`）。→ 建议：暴露 `AcpAgent.onExtension(method, handler)`（含 `_` 前缀约定检查可选）。
+### 剩余跟踪项（非缺口 / 后续规划）
 
-### P2 —— 完整性/易用性打磨
-
-- **A5. 会话初始状态不可返回**：`NewSessionResponse`/`LoadSessionResponse` 的 `modes`（availableModes）、`configOptions` 无法经钩子注入；`setOnNewSession` 也不带 `mcpServers`/`additionalDirectories`。→ 建议：钩子签名升级或新增会话配置对象回调。
-- **C2. Client 侧反向方法类型化 handler 缺失**：request_permission/terminal/fs 需手写 `on()` + JsonValue 解析。→ 建议：仿 mcp-cj 提供 `setOnRequestPermission` 等类型化注册。
-- **N1. Client 侧扩展通知无订阅口**：`handleNotification` 只分发 `session/update`。→ 建议：公开 `setOnNotification(method, cb)`。
-- **M1. `_meta` 字段覆盖不全**：统一给所有请求/响应类型补 `_meta` 可编程访问。
-- **A1. cwd 只查非空**：按规范要求绝对路径校验（可加 `Path.isAbsolute` 检查）。
-- **A3. 版本协商增强**：收到不支持版本时按官方建议协商（当前直接回自身 v1，宽松可接受）。
-
-### ➖ 跟踪项（非缺口，随官方演进）
-
-- Streamable HTTP 传输（官方 draft in progress）。
-- **ACP v2**（[draft 公告](https://agentclientprotocol.com/announcements/acp-v2-draft)）：迁移成本评估（v2 章节已上线：prompt-lifecycle、去掉 session-modes 等），v1 稳定后规划。
-- **MCP 透传**（`session/new.mcpServers` 建立真实 MCP 连接）：acp-cj 定位为协议框架，连接层建议由业务方用 `mcp-cj` 实现，acp-cj 只保证字段收发与类型。
-- schema 版本漂移：以 `docs/schema/schema.json` md5 与官方 release latest 比对为准（本文件头已记录）。
-
----
+- **A5. 会话初始状态可返回**：`NewSessionResponse`/`LoadSessionResponse` 的 `modes`（availableModes）、`configOptions` 目前只能由业务方事后用 `current_mode_update`/`config_option_update` 通知补齐，握手响应内无法经钩子注入 —— 若 pi_bridge 需要「会话创建即带模式」再实现（钩子签名升级）。
+- **Streamable HTTP 传输**：官方 draft in progress（➖ 跟踪）。
+- **ACP v2 draft**：迁移评估（➖ 跟踪）。
+- **MCP 透传建立连接**（`session/new.mcpServers` 建立真实 MCP 子进程）：建议业务方组合 `mcp-cj` 实现，acp-cj 只保证字段收发与类型。
+- schema 漂移：以 `docs/schema/schema.json` md5 与官方 release latest 比对为准（本文件头已记录）。
 
 ## 8. 验证基线（如何跑）
 

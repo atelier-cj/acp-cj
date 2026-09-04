@@ -129,15 +129,18 @@ public class InitializeResponse <: JsonSerializable & JsonDeserializable<Initial
 
 public class AuthenticateRequest <: JsonSerializable & JsonDeserializable<AuthenticateRequest> {
     public var methodId: String = ""
-    public init() {}
+        public var _meta: ?JsonValue = None
+public init() {}
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
         w.writeName("methodId").writeValue(this.methodId)
+                if (let Some(v) <- this._meta) { w.writeName("_meta").writeValue(v) }
         w.endObject()
     }
     public static func fromJson(r: JsonReader): AuthenticateRequest {
         let res = AuthenticateRequest()
         fromJsonObject(r,
+            ("_meta", {=> res._meta = r.readValue<Option<JsonValue>>()}),
             ("methodId", {=> res.methodId = r.readValue<String>()})
         )
         res
@@ -242,7 +245,8 @@ public class NewSessionRequest <: JsonSerializable & JsonDeserializable<NewSessi
     public var cwd: String = ""
     public var mcpServers = ArrayList<McpServer>()
     public var additionalDirectories: ?ArrayList<String> = None
-    public init() {}
+        public var _meta: ?JsonValue = None
+public init() {}
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
         w.writeName("cwd").writeValue(this.cwd)
@@ -256,11 +260,13 @@ public class NewSessionRequest <: JsonSerializable & JsonDeserializable<NewSessi
             for (item in v) { w.writeValue(item) }
             w.endArray()
         }
+                if (let Some(v) <- this._meta) { w.writeName("_meta").writeValue(v) }
         w.endObject()
     }
     public static func fromJson(r: JsonReader): NewSessionRequest {
         let res = NewSessionRequest()
         fromJsonObject(r,
+            ("_meta", {=> res._meta = r.readValue<Option<JsonValue>>()}),
             ("cwd", {=> res.cwd = r.readValue<String>()}),
             ("mcpServers", {=> res.mcpServers = r.readValue<ArrayList<McpServer>>()}),
             ("additionalDirectories", {=> res.additionalDirectories = r.readValue<Option<ArrayList<String>>>()})
@@ -306,7 +312,8 @@ public class SessionLifecycleRequest <: JsonSerializable & JsonDeserializable<Se
     public var cwd: String = ""
     public var mcpServers = ArrayList<McpServer>()
     public var additionalDirectories: ?ArrayList<String> = None
-    public init() {}
+        public var _meta: ?JsonValue = None
+public init() {}
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
         w.writeName("sessionId").writeValue(this.sessionId)
@@ -321,11 +328,13 @@ public class SessionLifecycleRequest <: JsonSerializable & JsonDeserializable<Se
             for (item in v) { w.writeValue(item) }
             w.endArray()
         }
+                if (let Some(v) <- this._meta) { w.writeName("_meta").writeValue(v) }
         w.endObject()
     }
     public static func fromJson(r: JsonReader): SessionLifecycleRequest {
         let res = SessionLifecycleRequest()
         fromJsonObject(r,
+            ("_meta", {=> res._meta = r.readValue<Option<JsonValue>>()}),
             ("sessionId", {=> res.sessionId = r.readValue<String>()}),
             ("cwd", {=> res.cwd = r.readValue<String>()}),
             ("mcpServers", {=> res.mcpServers = r.readValue<ArrayList<McpServer>>()}),
@@ -341,7 +350,8 @@ public type ResumeSessionRequest = SessionLifecycleRequest
 public class LoadSessionResponse <: JsonSerializable & JsonDeserializable<LoadSessionResponse> {
     public var modes: ?SessionModeState = None
     public var configOptions: ?ArrayList<SessionConfigOption> = None
-    public init() {}
+        public var _meta: ?JsonValue = None
+public init() {}
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
         if (let Some(v) <- this.modes) { w.writeName("modes").writeValue(v) }
@@ -351,11 +361,13 @@ public class LoadSessionResponse <: JsonSerializable & JsonDeserializable<LoadSe
             for (item in v) { item.toJson(w) }
             w.endArray()
         }
+                if (let Some(v) <- this._meta) { w.writeName("_meta").writeValue(v) }
         w.endObject()
     }
     public static func fromJson(r: JsonReader): LoadSessionResponse {
         let res = LoadSessionResponse()
         fromJsonObject(r,
+            ("_meta", {=> res._meta = r.readValue<Option<JsonValue>>()}),
             ("modes", {=> res.modes = r.readValue<Option<SessionModeState>>()}),
             ("configOptions", {=> res.configOptions = r.readValue<Option<ArrayList<SessionConfigOption>>>()})
         )
@@ -367,16 +379,19 @@ public type ResumeSessionResponse = LoadSessionResponse
 public class ListSessionsRequest <: JsonSerializable & JsonDeserializable<ListSessionsRequest> {
     public var cursor: ?String = None
     public var cwd: ?String = None
-    public init() {}
+        public var _meta: ?JsonValue = None
+public init() {}
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
         if (let Some(v) <- this.cursor) { w.writeName("cursor").writeValue(v) }
         if (let Some(v) <- this.cwd) { w.writeName("cwd").writeValue(v) }
+                if (let Some(v) <- this._meta) { w.writeName("_meta").writeValue(v) }
         w.endObject()
     }
     public static func fromJson(r: JsonReader): ListSessionsRequest {
         let res = ListSessionsRequest()
         fromJsonObject(r,
+            ("_meta", {=> res._meta = r.readValue<Option<JsonValue>>()}),
             ("cursor", {=> res.cursor = r.readValue<Option<String>>()}),
             ("cwd", {=> res.cwd = r.readValue<Option<String>>()})
         )
@@ -387,7 +402,8 @@ public class ListSessionsRequest <: JsonSerializable & JsonDeserializable<ListSe
 public class ListSessionsResponse <: JsonSerializable & JsonDeserializable<ListSessionsResponse> {
     public var sessions = ArrayList<SessionInfo>()
     public var nextCursor: ?String = None
-    public init() {}
+        public var _meta: ?JsonValue = None
+public init() {}
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
         w.writeName("sessions")
@@ -395,11 +411,13 @@ public class ListSessionsResponse <: JsonSerializable & JsonDeserializable<ListS
         for (item in this.sessions) { item.toJson(w) }
         w.endArray()
         if (let Some(v) <- this.nextCursor) { w.writeName("nextCursor").writeValue(v) }
+                if (let Some(v) <- this._meta) { w.writeName("_meta").writeValue(v) }
         w.endObject()
     }
     public static func fromJson(r: JsonReader): ListSessionsResponse {
         let res = ListSessionsResponse()
         fromJsonObject(r,
+            ("_meta", {=> res._meta = r.readValue<Option<JsonValue>>()}),
             ("sessions", {=> res.sessions = r.readValue<ArrayList<SessionInfo>>()}),
             ("nextCursor", {=> res.nextCursor = r.readValue<Option<String>>()})
         )
@@ -409,16 +427,19 @@ public class ListSessionsResponse <: JsonSerializable & JsonDeserializable<ListS
 
 public class DeleteSessionRequest <: JsonSerializable & JsonDeserializable<DeleteSessionRequest> {
     public var sessionId: String = ""
-    public init() {}
+        public var _meta: ?JsonValue = None
+public init() {}
     public init(sessionId: String) { this.sessionId = sessionId }
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
         w.writeName("sessionId").writeValue(this.sessionId)
+                if (let Some(v) <- this._meta) { w.writeName("_meta").writeValue(v) }
         w.endObject()
     }
     public static func fromJson(r: JsonReader): DeleteSessionRequest {
         let res = DeleteSessionRequest()
         fromJsonObject(r,
+            ("_meta", {=> res._meta = r.readValue<Option<JsonValue>>()}),
             ("sessionId", {=> res.sessionId = r.readValue<String>()})
         )
         res
@@ -427,16 +448,19 @@ public class DeleteSessionRequest <: JsonSerializable & JsonDeserializable<Delet
 
 public class CloseSessionRequest <: JsonSerializable & JsonDeserializable<CloseSessionRequest> {
     public var sessionId: String = ""
-    public init() {}
+        public var _meta: ?JsonValue = None
+public init() {}
     public init(sessionId: String) { this.sessionId = sessionId }
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
         w.writeName("sessionId").writeValue(this.sessionId)
+                if (let Some(v) <- this._meta) { w.writeName("_meta").writeValue(v) }
         w.endObject()
     }
     public static func fromJson(r: JsonReader): CloseSessionRequest {
         let res = CloseSessionRequest()
         fromJsonObject(r,
+            ("_meta", {=> res._meta = r.readValue<Option<JsonValue>>()}),
             ("sessionId", {=> res.sessionId = r.readValue<String>()})
         )
         res
@@ -494,15 +518,18 @@ public class PromptResponse <: JsonSerializable & JsonDeserializable<PromptRespo
 
 public class CancelNotification <: JsonSerializable & JsonDeserializable<CancelNotification> {
     public var sessionId: String = ""
-    public init() {}
+        public var _meta: ?JsonValue = None
+public init() {}
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
         w.writeName("sessionId").writeValue(this.sessionId)
+                if (let Some(v) <- this._meta) { w.writeName("_meta").writeValue(v) }
         w.endObject()
     }
     public static func fromJson(r: JsonReader): CancelNotification {
         let res = CancelNotification()
         fromJsonObject(r,
+            ("_meta", {=> res._meta = r.readValue<Option<JsonValue>>()}),
             ("sessionId", {=> res.sessionId = r.readValue<String>()})
         )
         res
@@ -514,16 +541,19 @@ public class CancelNotification <: JsonSerializable & JsonDeserializable<CancelN
 public class SetSessionModeRequest <: JsonSerializable & JsonDeserializable<SetSessionModeRequest> {
     public var sessionId: String = ""
     public var modeId: String = ""
-    public init() {}
+        public var _meta: ?JsonValue = None
+public init() {}
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
         w.writeName("sessionId").writeValue(this.sessionId)
         w.writeName("modeId").writeValue(this.modeId)
+                if (let Some(v) <- this._meta) { w.writeName("_meta").writeValue(v) }
         w.endObject()
     }
     public static func fromJson(r: JsonReader): SetSessionModeRequest {
         let res = SetSessionModeRequest()
         fromJsonObject(r,
+            ("_meta", {=> res._meta = r.readValue<Option<JsonValue>>()}),
             ("sessionId", {=> res.sessionId = r.readValue<String>()}),
             ("modeId", {=> res.modeId = r.readValue<String>()})
         )
@@ -537,7 +567,8 @@ public class SetSessionConfigOptionRequest <: JsonSerializable & JsonDeserializa
     // value 变体：value_id（默认）或 boolean
     public var value: ?String = None
     public var boolValue: ?Bool = None
-    public init() {}
+        public var _meta: ?JsonValue = None
+public init() {}
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
         w.writeName("sessionId").writeValue(this.sessionId)
@@ -548,6 +579,7 @@ public class SetSessionConfigOptionRequest <: JsonSerializable & JsonDeserializa
         } else if (let Some(v) <- this.value) {
             w.writeName("value").writeValue(v)
         }
+                if (let Some(v) <- this._meta) { w.writeName("_meta").writeValue(v) }
         w.endObject()
     }
     public static func fromJson(r: JsonReader): SetSessionConfigOptionRequest {
@@ -567,18 +599,21 @@ public class SetSessionConfigOptionRequest <: JsonSerializable & JsonDeserializa
 
 public class SetSessionConfigOptionResponse <: JsonSerializable & JsonDeserializable<SetSessionConfigOptionResponse> {
     public var configOptions = ArrayList<SessionConfigOption>()
-    public init() {}
+        public var _meta: ?JsonValue = None
+public init() {}
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
         w.writeName("configOptions")
         w.startArray()
         for (item in this.configOptions) { item.toJson(w) }
         w.endArray()
+                if (let Some(v) <- this._meta) { w.writeName("_meta").writeValue(v) }
         w.endObject()
     }
     public static func fromJson(r: JsonReader): SetSessionConfigOptionResponse {
         let res = SetSessionConfigOptionResponse()
         fromJsonObject(r,
+            ("_meta", {=> res._meta = r.readValue<Option<JsonValue>>()}),
             ("configOptions", {=> res.configOptions = r.readValue<ArrayList<SessionConfigOption>>()})
         )
         res
@@ -647,16 +682,19 @@ public class RequestPermissionRequest <: JsonSerializable & JsonDeserializable<R
 // outcome 变体：cancelled / selected
 public class RequestPermissionResponse <: JsonSerializable & JsonDeserializable<RequestPermissionResponse> {
     public var outcome = RequestPermissionOutcome()
-    public init() {}
+        public var _meta: ?JsonValue = None
+public init() {}
     public init(outcome: RequestPermissionOutcome) { this.outcome = outcome }
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
         w.writeName("outcome").writeValue(this.outcome)
+                if (let Some(v) <- this._meta) { w.writeName("_meta").writeValue(v) }
         w.endObject()
     }
     public static func fromJson(r: JsonReader): RequestPermissionResponse {
         let res = RequestPermissionResponse()
         fromJsonObject(r,
+            ("_meta", {=> res._meta = r.readValue<Option<JsonValue>>()}),
             ("outcome", {=> res.outcome = r.readValue<RequestPermissionOutcome>()})
         )
         res
@@ -701,18 +739,21 @@ public class ReadTextFileRequest <: JsonSerializable & JsonDeserializable<ReadTe
     public var path: String = ""
     public var line: ?Int64 = None
     public var limit: ?Int64 = None
-    public init() {}
+        public var _meta: ?JsonValue = None
+public init() {}
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
         w.writeName("sessionId").writeValue(this.sessionId)
         w.writeName("path").writeValue(this.path)
         if (let Some(v) <- this.line) { w.writeName("line").writeValue(v) }
         if (let Some(v) <- this.limit) { w.writeName("limit").writeValue(v) }
+                if (let Some(v) <- this._meta) { w.writeName("_meta").writeValue(v) }
         w.endObject()
     }
     public static func fromJson(r: JsonReader): ReadTextFileRequest {
         let res = ReadTextFileRequest()
         fromJsonObject(r,
+            ("_meta", {=> res._meta = r.readValue<Option<JsonValue>>()}),
             ("sessionId", {=> res.sessionId = r.readValue<String>()}),
             ("path", {=> res.path = r.readValue<String>()}),
             ("line", {=> res.line = r.readValue<Option<Int64>>()}),
@@ -724,15 +765,18 @@ public class ReadTextFileRequest <: JsonSerializable & JsonDeserializable<ReadTe
 
 public class ReadTextFileResponse <: JsonSerializable & JsonDeserializable<ReadTextFileResponse> {
     public var content: String = ""
-    public init() {}
+        public var _meta: ?JsonValue = None
+public init() {}
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
         w.writeName("content").writeValue(this.content)
+                if (let Some(v) <- this._meta) { w.writeName("_meta").writeValue(v) }
         w.endObject()
     }
     public static func fromJson(r: JsonReader): ReadTextFileResponse {
         let res = ReadTextFileResponse()
         fromJsonObject(r,
+            ("_meta", {=> res._meta = r.readValue<Option<JsonValue>>()}),
             ("content", {=> res.content = r.readValue<String>()})
         )
         res
@@ -743,17 +787,20 @@ public class WriteTextFileRequest <: JsonSerializable & JsonDeserializable<Write
     public var sessionId: String = ""
     public var path: String = ""
     public var content: String = ""
-    public init() {}
+        public var _meta: ?JsonValue = None
+public init() {}
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
         w.writeName("sessionId").writeValue(this.sessionId)
         w.writeName("path").writeValue(this.path)
         w.writeName("content").writeValue(this.content)
+                if (let Some(v) <- this._meta) { w.writeName("_meta").writeValue(v) }
         w.endObject()
     }
     public static func fromJson(r: JsonReader): WriteTextFileRequest {
         let res = WriteTextFileRequest()
         fromJsonObject(r,
+            ("_meta", {=> res._meta = r.readValue<Option<JsonValue>>()}),
             ("sessionId", {=> res.sessionId = r.readValue<String>()}),
             ("path", {=> res.path = r.readValue<String>()}),
             ("content", {=> res.content = r.readValue<String>()})
@@ -771,7 +818,8 @@ public class CreateTerminalRequest <: JsonSerializable & JsonDeserializable<Crea
     public var env: ?ArrayList<EnvVariable> = None
     public var cwd: ?String = None
     public var outputByteLimit: ?Int64 = None
-    public init() {}
+        public var _meta: ?JsonValue = None
+public init() {}
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
         w.writeName("sessionId").writeValue(this.sessionId)
@@ -790,11 +838,13 @@ public class CreateTerminalRequest <: JsonSerializable & JsonDeserializable<Crea
         }
         if (let Some(v) <- this.cwd) { w.writeName("cwd").writeValue(v) }
         if (let Some(v) <- this.outputByteLimit) { w.writeName("outputByteLimit").writeValue(v) }
+                if (let Some(v) <- this._meta) { w.writeName("_meta").writeValue(v) }
         w.endObject()
     }
     public static func fromJson(r: JsonReader): CreateTerminalRequest {
         let res = CreateTerminalRequest()
         fromJsonObject(r,
+            ("_meta", {=> res._meta = r.readValue<Option<JsonValue>>()}),
             ("sessionId", {=> res.sessionId = r.readValue<String>()}),
             ("command", {=> res.command = r.readValue<String>()}),
             ("args", {=> res.args = r.readValue<Option<ArrayList<String>>>()}),
@@ -808,16 +858,19 @@ public class CreateTerminalRequest <: JsonSerializable & JsonDeserializable<Crea
 
 public class CreateTerminalResponse <: JsonSerializable & JsonDeserializable<CreateTerminalResponse> {
     public var terminalId: String = ""
-    public init() {}
+        public var _meta: ?JsonValue = None
+public init() {}
     public init(terminalId: String) { this.terminalId = terminalId }
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
         w.writeName("terminalId").writeValue(this.terminalId)
+                if (let Some(v) <- this._meta) { w.writeName("_meta").writeValue(v) }
         w.endObject()
     }
     public static func fromJson(r: JsonReader): CreateTerminalResponse {
         let res = CreateTerminalResponse()
         fromJsonObject(r,
+            ("_meta", {=> res._meta = r.readValue<Option<JsonValue>>()}),
             ("terminalId", {=> res.terminalId = r.readValue<String>()})
         )
         res
@@ -827,16 +880,19 @@ public class CreateTerminalResponse <: JsonSerializable & JsonDeserializable<Cre
 public class TerminalIdRequest <: JsonSerializable & JsonDeserializable<TerminalIdRequest> {
     public var sessionId: String = ""
     public var terminalId: String = ""
-    public init() {}
+        public var _meta: ?JsonValue = None
+public init() {}
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
         w.writeName("sessionId").writeValue(this.sessionId)
         w.writeName("terminalId").writeValue(this.terminalId)
+                if (let Some(v) <- this._meta) { w.writeName("_meta").writeValue(v) }
         w.endObject()
     }
     public static func fromJson(r: JsonReader): TerminalIdRequest {
         let res = TerminalIdRequest()
         fromJsonObject(r,
+            ("_meta", {=> res._meta = r.readValue<Option<JsonValue>>()}),
             ("sessionId", {=> res.sessionId = r.readValue<String>()}),
             ("terminalId", {=> res.terminalId = r.readValue<String>()})
         )
@@ -873,17 +929,20 @@ public class TerminalOutputResponse <: JsonSerializable & JsonDeserializable<Ter
     public var output: String = ""
     public var truncated: Bool = false
     public var exitStatus: ?TerminalExitStatus = None
-    public init() {}
+        public var _meta: ?JsonValue = None
+public init() {}
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
         w.writeName("output").writeValue(this.output)
         w.writeName("truncated").writeValue(this.truncated)
         if (let Some(v) <- this.exitStatus) { w.writeName("exitStatus").writeValue(v) }
+                if (let Some(v) <- this._meta) { w.writeName("_meta").writeValue(v) }
         w.endObject()
     }
     public static func fromJson(r: JsonReader): TerminalOutputResponse {
         let res = TerminalOutputResponse()
         fromJsonObject(r,
+            ("_meta", {=> res._meta = r.readValue<Option<JsonValue>>()}),
             ("output", {=> res.output = r.readValue<String>()}),
             ("truncated", {=> res.truncated = r.readValue<Bool>()}),
             ("exitStatus", {=> res.exitStatus = r.readValue<Option<TerminalExitStatus>>()})
@@ -895,16 +954,19 @@ public class TerminalOutputResponse <: JsonSerializable & JsonDeserializable<Ter
 public class WaitForTerminalExitResponse <: JsonSerializable & JsonDeserializable<WaitForTerminalExitResponse> {
     public var exitCode: ?Int64 = None
     public var signal: ?String = None
-    public init() {}
+        public var _meta: ?JsonValue = None
+public init() {}
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
         if (let Some(v) <- this.exitCode) { w.writeName("exitCode").writeValue(v) }
         if (let Some(v) <- this.signal) { w.writeName("signal").writeValue(v) }
+                if (let Some(v) <- this._meta) { w.writeName("_meta").writeValue(v) }
         w.endObject()
     }
     public static func fromJson(r: JsonReader): WaitForTerminalExitResponse {
         let res = WaitForTerminalExitResponse()
         fromJsonObject(r,
+            ("_meta", {=> res._meta = r.readValue<Option<JsonValue>>()}),
             ("exitCode", {=> res.exitCode = r.readValue<Option<Int64>>()}),
             ("signal", {=> res.signal = r.readValue<Option<String>>()})
         )
@@ -916,15 +978,18 @@ public class WaitForTerminalExitResponse <: JsonSerializable & JsonDeserializabl
 
 public class CancelRequestNotification <: JsonSerializable & JsonDeserializable<CancelRequestNotification> {
     public var requestId: JsonValue = JsonValue.Number(0.0)
-    public init() {}
+        public var _meta: ?JsonValue = None
+public init() {}
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
         w.writeName("requestId"); this.requestId.toJson(w)
+                if (let Some(v) <- this._meta) { w.writeName("_meta").writeValue(v) }
         w.endObject()
     }
     public static func fromJson(r: JsonReader): CancelRequestNotification {
         let res = CancelRequestNotification()
         fromJsonObject(r,
+            ("_meta", {=> res._meta = r.readValue<Option<JsonValue>>()}),
             ("requestId", {=> res.requestId = r.readValue<JsonValue>()})
         )
         res

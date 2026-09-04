@@ -3,6 +3,7 @@ package acp
 import jsonvalue.*
 import ystyle::jsonrpc.{JsonRpcClient, Transport, NewlineFraming, RequestId, Notification, Request, Result}
 import std.collection.*
+import std.sync.Mutex
 import std.process.{launch, ProcessRedirect, SubProcess}
 import stdx.encoding.json.stream.*
 import acp.types.*
@@ -14,6 +15,19 @@ public type SessionUpdateCallback = (String /*sessionId*/, SessionUpdate) -> Uni
 public type PermissionCallback = (RequestPermissionRequest) -> RequestPermissionResponse
 public type AcpRequestHandler = (JsonValue /*params*/) -> ?JsonValue
 public type ErrorCallback = (Exception) -> Unit
+/// 非 session/update 通知的订阅回调（含 _ 前缀扩展通知、elicitation/complete 等）
+public type NotificationHandler = (String /*method*/, JsonValue /*params*/) -> Unit
+// ---- Agent→Client 反向请求的类型化回调 ----
+public type RequestPermissionCallback = (RequestPermissionRequest) -> RequestPermissionResponse
+public type ReadTextFileCallback = (ReadTextFileRequest) -> ReadTextFileResponse
+public type WriteTextFileCallback = (WriteTextFileRequest) -> EmptyResult
+public type CreateTerminalCallback = (CreateTerminalRequest) -> CreateTerminalResponse
+public type TerminalOutputCallback = (TerminalIdRequest) -> TerminalOutputResponse
+public type TerminalWaitForExitCallback = (TerminalIdRequest) -> WaitForTerminalExitResponse
+public type TerminalKillCallback = (TerminalIdRequest) -> EmptyResult
+public type TerminalReleaseCallback = (TerminalIdRequest) -> EmptyResult
+public type ElicitationCreateCallback = (CreateElicitationRequest) -> CreateElicitationResponse
+public type ElicitationCompleteCallback = (ElicitationId /*elicitationId*/) -> Unit
 
 /**
  * AcpClient：ACP 客户端框架。
@@ -24,7 +38,11 @@ public class AcpClient {
     private let rpcClient: JsonRpcClient
     private var initialized: Bool = false
     private var sessionUpdateCb: ?SessionUpdateCallback = None
+    private var elicitationCompleteCb: ?ElicitationCompleteCallback = None
     private var errorCb: ?ErrorCallback = None
+    // 扩展通知订阅表：method -> 回调列表
+    private let notifLock = Mutex()
+    private let notifHandlers = HashMap<String, ArrayList<NotificationHandler>>()
 
     public init(transport: Transport) {
         this.rpcClient = JsonRpcClient(transport, framing: NewlineFraming())
@@ -165,6 +183,16 @@ public class AcpClient {
         this.rpcClient.call<SetSessionConfigOptionRequest, SetSessionConfigOptionResponse>("session/set_config_option", params: req, timeout: timeout)
     }
 
+    // ===================== 扩展方法 =====================
+
+    /// 调用 Agent 注册的扩展方法（`_` 前缀，配合 AcpAgent.registerExtensionMethod）。
+    /// 返回原始 JsonValue 结果；未注册/未处理时得到 -32601 错误。
+    public func extensionCall(method: String, params: JsonValue,
+                              timeout!: Duration = 30 * Duration.second): Result<JsonValue> {
+        if (!this.initialized) { return Result.Err("Client not initialized") }
+        this.rpcClient.call<JsonValue, JsonValue>(method, params: Some(params), timeout: timeout)
+    }
+
     // ===================== 认证 =====================
 
     public func authenticate(methodId: String, timeout!: Duration = 30 * Duration.second): Result<EmptyResult> {
@@ -211,6 +239,11 @@ public class AcpClient {
 
     public func setOnSessionUpdate(cb: SessionUpdateCallback): Unit { this.sessionUpdateCb = Some(cb) }
 
+    /// 订阅 Agent 的 elicitation/complete 通知（URL 模式外部交互完成）
+    public func setOnElicitationComplete(cb: ElicitationCompleteCallback): Unit {
+        this.elicitationCompleteCb = Some(cb)
+    }
+
     public func setOnError(cb: ErrorCallback): Unit { this.errorCb = Some(cb) }
 
     /**
@@ -219,6 +252,67 @@ public class AcpClient {
      */
     public func on(method: String, handler: AcpRequestHandler): Unit {
         this.rpcClient.registerRequestHandler(method, { req => this.dispatch(method, req, handler) })
+    }
+
+    // ===================== 反向请求类型化注册（C2） =====================
+
+    /// 注册 session/request_permission 类型化处理（参数/响应自动解析）
+    public func setOnRequestPermission(cb: RequestPermissionCallback): Unit {
+        this.registerTyped("session/request_permission", cb)
+    }
+    public func setOnReadTextFile(cb: ReadTextFileCallback): Unit {
+        this.registerTyped("fs/read_text_file", cb)
+    }
+    public func setOnWriteTextFile(cb: WriteTextFileCallback): Unit {
+        this.registerTyped("fs/write_text_file", cb)
+    }
+    public func setOnCreateTerminal(cb: CreateTerminalCallback): Unit {
+        this.registerTyped("terminal/create", cb)
+    }
+    public func setOnTerminalOutput(cb: TerminalOutputCallback): Unit {
+        this.registerTyped("terminal/output", cb)
+    }
+    public func setOnTerminalWaitForExit(cb: TerminalWaitForExitCallback): Unit {
+        this.registerTyped("terminal/wait_for_exit", cb)
+    }
+    public func setOnTerminalKill(cb: TerminalKillCallback): Unit {
+        this.registerTyped("terminal/kill", cb)
+    }
+    public func setOnTerminalRelease(cb: TerminalReleaseCallback): Unit {
+        this.registerTyped("terminal/release", cb)
+    }
+    /// 注册 elicitation/create 类型化处理（表单值由回调构造 CreateElicitationResponse）
+    public func setOnElicitationCreate(cb: ElicitationCreateCallback): Unit {
+        this.registerTyped("elicitation/create", cb)
+    }
+
+    /// 通用实现：解析 params 为 RQ → 调用回调 → 序列化 RS 为响应 result
+    private func registerTyped<RQ, RS>(method: String, cb: (RQ) -> RS)
+        where RQ <: JsonDeserializable<RQ>, RS <: JsonSerializable {
+        this.on(method, { params =>
+            try {
+                let req: RQ = JsonValue.toObject<RQ>(params)
+                Some(JsonValue.fromObject(cb(req)))
+            } catch (e: Exception) {
+                throw Exception("Invalid ${method} params: ${e.message}")
+            }
+        })
+    }
+
+    /**
+     * 订阅 Agent 发来的非 session/update 通知（_ 前缀扩展通知、elicitation/complete 等）。
+     * 可对同一 method 多次订阅（叠加生效）。
+     */
+    public func onNotification(method: String, cb: NotificationHandler): Unit {
+        synchronized(this.notifLock) {
+            match (this.notifHandlers.get(method)) {
+                case Some(list) => list.add(cb)
+                case None =>
+                    let list = ArrayList<NotificationHandler>()
+                    list.add(cb)
+                    this.notifHandlers[method] = list
+            }
+        }
     }
 
     // ===================== 内部 =====================
@@ -241,10 +335,38 @@ public class AcpClient {
                     if (let Some(cb) <- this.sessionUpdateCb) {
                         cb(notif.sessionId, notif.update)
                     }
-                case _ => () // 忽略未识别的 ACP 通知
+                case "elicitation/complete" =>
+                    let notif = match (n.params) {
+                        case Some(p) => JsonValue.toObject<CompleteElicitationNotification>(p)
+                        case None => CompleteElicitationNotification()
+                    }
+                    if (let Some(cb) <- this.elicitationCompleteCb) {
+                        cb(notif.elicitationId)
+                    }
+                    this.dispatchOtherNotification(n.method, n.params)
+                case other =>
+                    this.dispatchOtherNotification(other, n.params)
             }
         } catch (e: Exception) {
             if (let Some(cb) <- this.errorCb) { cb(e) }
+        }
+    }
+
+    /// 把非 session/update 通知转交 onNotification 订阅者
+    private func dispatchOtherNotification(method: String, params: ?JsonValue): Unit {
+        let cbs = synchronized(this.notifLock) {
+            match (this.notifHandlers.get(method)) {
+                case Some(list) => ArrayList<NotificationHandler>(list)
+                case None => ArrayList<NotificationHandler>()
+            }
+        }
+        let p = params ?? JsonValue.Null
+        for (cb in cbs) {
+            try {
+                cb(method, p)
+            } catch (e: Exception) {
+                if (let Some(errCb) <- this.errorCb) { errCb(e) }
+            }
         }
     }
 }
