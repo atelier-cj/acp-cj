@@ -17,6 +17,15 @@ public type AcpRequestHandler = (JsonValue /*params*/) -> ?JsonValue
 public type ErrorCallback = (Exception) -> Unit
 /// 非 session/update 通知的订阅回调（含 _ 前缀扩展通知、elicitation/complete 等）
 public type NotificationHandler = (String /*method*/, JsonValue /*params*/) -> Unit
+// ---- Agent→Client 反向请求的类型化回调 ----
+public type RequestPermissionCallback = (RequestPermissionRequest) -> RequestPermissionResponse
+public type ReadTextFileCallback = (ReadTextFileRequest) -> ReadTextFileResponse
+public type WriteTextFileCallback = (WriteTextFileRequest) -> EmptyResult
+public type CreateTerminalCallback = (CreateTerminalRequest) -> CreateTerminalResponse
+public type TerminalOutputCallback = (TerminalIdRequest) -> TerminalOutputResponse
+public type TerminalWaitForExitCallback = (TerminalIdRequest) -> WaitForTerminalExitResponse
+public type TerminalKillCallback = (TerminalIdRequest) -> EmptyResult
+public type TerminalReleaseCallback = (TerminalIdRequest) -> EmptyResult
 
 /**
  * AcpClient：ACP 客户端框架。
@@ -235,6 +244,47 @@ public class AcpClient {
      */
     public func on(method: String, handler: AcpRequestHandler): Unit {
         this.rpcClient.registerRequestHandler(method, { req => this.dispatch(method, req, handler) })
+    }
+
+    // ===================== 反向请求类型化注册（C2） =====================
+
+    /// 注册 session/request_permission 类型化处理（参数/响应自动解析）
+    public func setOnRequestPermission(cb: RequestPermissionCallback): Unit {
+        this.registerTyped("session/request_permission", cb)
+    }
+    public func setOnReadTextFile(cb: ReadTextFileCallback): Unit {
+        this.registerTyped("fs/read_text_file", cb)
+    }
+    public func setOnWriteTextFile(cb: WriteTextFileCallback): Unit {
+        this.registerTyped("fs/write_text_file", cb)
+    }
+    public func setOnCreateTerminal(cb: CreateTerminalCallback): Unit {
+        this.registerTyped("terminal/create", cb)
+    }
+    public func setOnTerminalOutput(cb: TerminalOutputCallback): Unit {
+        this.registerTyped("terminal/output", cb)
+    }
+    public func setOnTerminalWaitForExit(cb: TerminalWaitForExitCallback): Unit {
+        this.registerTyped("terminal/wait_for_exit", cb)
+    }
+    public func setOnTerminalKill(cb: TerminalKillCallback): Unit {
+        this.registerTyped("terminal/kill", cb)
+    }
+    public func setOnTerminalRelease(cb: TerminalReleaseCallback): Unit {
+        this.registerTyped("terminal/release", cb)
+    }
+
+    /// 通用实现：解析 params 为 RQ → 调用回调 → 序列化 RS 为响应 result
+    private func registerTyped<RQ, RS>(method: String, cb: (RQ) -> RS)
+        where RQ <: JsonDeserializable<RQ>, RS <: JsonSerializable {
+        this.on(method, { params =>
+            try {
+                let req: RQ = JsonValue.toObject<RQ>(params)
+                Some(JsonValue.fromObject(cb(req)))
+            } catch (e: Exception) {
+                throw Exception("Invalid ${method} params: ${e.message}")
+            }
+        })
     }
 
     /**

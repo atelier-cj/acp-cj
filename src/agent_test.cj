@@ -710,3 +710,121 @@ public func agent_extension_method_must_start_with_underscore() {
     @Expect(threw, true)
     agent.close()
 }
+
+// ===================== 1.5 Client 侧类型化反向 handler =====================
+
+@Test
+public func agent_typed_reverse_handlers_roundtrip() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.start()
+    let client = AcpClient(pair.a())
+    match (client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("connect failed: ${e}")
+    }
+    // Client 侧类型化注册（C2）：全部 8 类反向方法
+    client.setOnRequestPermission({ req =>
+        RequestPermissionResponse(RequestPermissionOutcome.selected(req.options[0].optionId))
+    })
+    client.setOnReadTextFile({ req =>
+        let r = ReadTextFileResponse()
+        r.content = "content of ${req.path}"
+        r
+    })
+    client.setOnWriteTextFile({ req => EmptyResult() })
+    client.setOnCreateTerminal({ req =>
+        let r = CreateTerminalResponse()
+        r.terminalId = "term_" + req.command
+        r
+    })
+    client.setOnTerminalOutput({ req =>
+        let r = TerminalOutputResponse()
+        r.output = "out of ${req.terminalId}"
+        r
+    })
+    client.setOnTerminalWaitForExit({ req =>
+        let r = WaitForTerminalExitResponse()
+        r.exitCode = Some(0)
+        r
+    })
+    client.setOnTerminalKill({ req => EmptyResult() })
+    client.setOnTerminalRelease({ req => EmptyResult() })
+
+    match (client.newSession("/tmp/proj")) {
+        case Result.Ok(resp) => ()
+        case Result.Err(e) => return @Fail("newSession failed: ${e}")
+    }
+    let sid = "sess_typed"
+
+    // request_permission
+    let toolCall = ToolCallUpdate()
+    toolCall.toolCallId = "call_1"
+    toolCall.title = Some("Run")
+    toolCall.kind = Some(ToolKindExecute)
+    toolCall.status = Some(ToolStatusPending)
+    let options = ArrayList<PermissionOption>()
+    options.add(PermissionOption("allow-once", "Allow once", "allow_once"))
+    match (agent.requestPermission(sid, toolCall, options)) {
+        case Result.Ok(resp) =>
+            @Expect(resp.outcome.outcome, "selected")
+            @Expect(resp.outcome.optionId, Some("allow-once"))
+        case Result.Err(e) => return @Fail("requestPermission failed: ${e}")
+    }
+
+    // fs
+    let rd = ReadTextFileRequest()
+    rd.sessionId = sid
+    rd.path = "/tmp/a.txt"
+    match (agent.readTextFile(rd)) {
+        case Result.Ok(resp) => @Expect(resp.content, "content of /tmp/a.txt")
+        case Result.Err(e) => return @Fail("readTextFile failed: ${e}")
+    }
+    let wr = WriteTextFileRequest()
+    wr.sessionId = sid
+    wr.path = "/tmp/a.txt"
+    wr.content = "hi"
+    match (agent.writeTextFile(wr)) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("writeTextFile failed: ${e}")
+    }
+
+    // terminal
+    let ct = CreateTerminalRequest()
+    ct.sessionId = sid
+    ct.command = "ls"
+    match (agent.createTerminal(ct)) {
+        case Result.Ok(resp) => @Expect(resp.terminalId, "term_ls")
+        case Result.Err(e) => return @Fail("createTerminal failed: ${e}")
+    }
+    let tid1 = TerminalIdRequest()
+    tid1.sessionId = sid
+    tid1.terminalId = "t1"
+    match (agent.terminalOutput(tid1)) {
+        case Result.Ok(resp) => @Expect(resp.output, "out of t1")
+        case Result.Err(e) => return @Fail("terminalOutput failed: ${e}")
+    }
+    let tid2 = TerminalIdRequest()
+    tid2.sessionId = sid
+    tid2.terminalId = "t1"
+    match (agent.terminalWaitForExit(tid2)) {
+        case Result.Ok(resp) => @Expect(resp.exitCode, Some(0))
+        case Result.Err(e) => return @Fail("terminalWaitForExit failed: ${e}")
+    }
+    let tid3 = TerminalIdRequest()
+    tid3.sessionId = sid
+    tid3.terminalId = "t1"
+    match (agent.terminalKill(tid3)) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("terminalKill failed: ${e}")
+    }
+    let tid4 = TerminalIdRequest()
+    tid4.sessionId = sid
+    tid4.terminalId = "t1"
+    match (agent.terminalRelease(tid4)) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("terminalRelease failed: ${e}")
+    }
+    client.close()
+    agent.close()
+}
