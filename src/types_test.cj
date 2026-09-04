@@ -612,3 +612,96 @@ public func types_elicitation_capabilities_roundtrip() {
 }
 
 
+
+// ===================== 4.3 McpServer 三形态判别封闭 =====================
+
+@Test
+public func types_mcpserver_stdio_roundtrip() {
+    let server = McpServer.stdio("fs-server", "/usr/bin/mcp-fs",
+        args: ArrayList<String>(["--root", "/tmp"]))
+    let ev = EnvVariable()
+    ev.name = "LOG"
+    ev.value = "1"
+    server.env = Some(ArrayList<EnvVariable>([ev]))
+    // stdio 形态：wire 无 type 字段
+    let raw = JsonValue.fromObject(server).stringify()
+    @Expect(raw.contains("\"command\""), true)
+    @Expect(raw.contains("\"args\""), true)
+    @Expect(raw.contains("\"env\""), true)
+    @Expect(raw.contains("\"type\""), false)
+    let rt = roundTrip(server)
+    @Expect(rt.name, "fs-server")
+    @Expect(rt.command, Some("/usr/bin/mcp-fs"))
+    match (rt.args) {
+        case Some(list) =>
+            @Expect(list.size, 2)
+            @Expect(list[0], "--root")
+        case None => @Fail("args lost")
+    }
+    match (rt.env) {
+        case Some(list) =>
+            @Expect(list.size, 1)
+            @Expect(list[0].name, "LOG")
+        case None => @Fail("env lost")
+    }
+    @Expect(rt.transport(), "stdio")
+}
+
+@Test
+public func types_mcpserver_http_sse_roundtrip() {
+    // http 形态
+    let h = HttpHeader()
+    h.name = "Authorization"
+    h.value = "Bearer x"
+    let server = McpServer.http("remote-tools", "https://example.com/mcp",
+        headers: ArrayList<HttpHeader>([h]))
+    let raw = JsonValue.fromObject(server).stringify()
+    @Expect(raw.contains("\"type\":\"http\""), true)
+    @Expect(raw.contains("\"url\""), true)
+    @Expect(raw.contains("\"command\""), false)
+    @Expect(raw.contains("\"headers\""), true)
+    let rt = roundTrip(server)
+    @Expect(rt.transport(), "http")
+    @Expect(rt.url, Some("https://example.com/mcp"))
+    match (rt.headers) {
+        case Some(list) =>
+            @Expect(list.size, 1)
+            @Expect(list[0].name, "Authorization")
+        case None => @Fail("headers lost")
+    }
+    @Expect(rt.command.isNone(), true)
+
+    // sse 形态
+    let sse = McpServer.sse("events", "https://example.com/sse")
+    @Expect(JsonValue.fromObject(sse).stringify().contains("\"type\":\"sse\""), true)
+    @Expect(roundTrip(sse).transport(), "sse")
+}
+
+@Test
+public func types_mcpserver_shape_filtering() {
+    // 判别封闭：http 形态下 command 字段不参与序列化（避免非法混合载荷）
+    let server = McpServer.http("s", "https://example.com")
+    server.command = Some("should-not-appear")
+    let raw = JsonValue.fromObject(server).stringify()
+    @Expect(raw.contains("should-not-appear"), false)
+    @Expect(raw.contains("\"url\""), true)
+
+    // stdio 形态下 url/headers 不序列化
+    let std = McpServer.stdio("s", "cmd")
+    std.url = Some("https://example.com")
+    let raw2 = JsonValue.fromObject(std).stringify()
+    @Expect(raw2.contains("\"url\""), false)
+    @Expect(raw2.contains("\"command\""), true)
+
+    // 未知 type（未来变体）：宽容保留所有字段
+    let other = McpServer()
+    other.name = "future"
+    other.`type` = Some("_custom")
+    other.url = Some("https://example.com")
+    other.command = Some("c")
+    let raw3 = JsonValue.fromObject(other).stringify()
+    @Expect(raw3.contains("_custom"), true)
+    @Expect(raw3.contains("\"command\""), true)
+    let rt = roundTrip(other)
+    @Expect(rt.transport(), "_custom")
+}

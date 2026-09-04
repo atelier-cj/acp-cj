@@ -149,54 +149,178 @@ public init() {}
 
 // ===================== Session =====================
 
+/**
+ * McpServer：MCP 服务器连接配置（session/new 等请求的 mcpServers）。
+ * 依据官方 schema 做三形态判别封闭（stdio/http/sse）：
+ *  - stdio：无 type 字段（判别为缺省），载荷 name/command/args/env
+ *  - http ：type="http"，载荷 name/url/headers
+ *  - sse  ：type="sse"，载荷 name/url/headers
+ * 未知 type（_ 前缀 / 未来变体）：宽容保留全部字段，转发无损。
+ */
 public class McpServer <: JsonSerializable & JsonDeserializable<McpServer> {
     public var name: String = ""
-    // stdio
+    // 形态：None=stdio；Some("http")/Some("sse")/其他未知值
+    public var `type`: ?String = None
+    // stdio 载荷
     public var command: ?String = None
     public var args: ?ArrayList<String> = None
     public var env: ?ArrayList<EnvVariable> = None
-    // http / sse
-    public var `type`: ?String = None
+    // http/sse 载荷
     public var url: ?String = None
     public var headers: ?ArrayList<HttpHeader> = None
+    public var _meta: ?JsonValue = None
     public init() {}
+
+    // ---- 静态构造（形态自动判定） ----
+
+    public static func stdio(name: String, command: String,
+                             args!: ArrayList<String> = ArrayList<String>(),
+                             env!: ArrayList<EnvVariable> = ArrayList<EnvVariable>()): McpServer {
+        let s = McpServer()
+        s.name = name
+        s.command = Some(command)
+        s.args = Some(args)
+        s.env = Some(env)
+        s
+    }
+    public static func http(name: String, url: String,
+                            headers!: ArrayList<HttpHeader> = ArrayList<HttpHeader>()): McpServer {
+        let s = McpServer()
+        s.name = name
+        s.`type` = Some("http")
+        s.url = Some(url)
+        s.headers = Some(headers)
+        s
+    }
+    public static func sse(name: String, url: String,
+                           headers!: ArrayList<HttpHeader> = ArrayList<HttpHeader>()): McpServer {
+        let s = McpServer()
+        s.name = name
+        s.`type` = Some("sse")
+        s.url = Some(url)
+        s.headers = Some(headers)
+        s
+    }
+
+    /// 传输形态：stdio / http / sse / 其他
+    public func transport(): String {
+        match (this.`type`) {
+            case Some(t) => t
+            case None => "stdio"
+        }
+    }
+
+    private func isStream(): Bool {
+        let t = this.transport()
+        t == "http" || t == "sse"
+    }
+
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
         w.writeName("name").writeValue(this.name)
-        if (let Some(v) <- this.command) { w.writeName("command").writeValue(v) }
         if (let Some(v) <- this.`type`) { w.writeName("type").writeValue(v) }
-        if (let Some(v) <- this.url) { w.writeName("url").writeValue(v) }
-        if (let Some(v) <- this.args) {
-            w.writeName("args")
-            w.startArray()
-            for (item in v) { w.writeValue(item) }
-            w.endArray()
+        if (this.isStream()) {
+            // http/sse：仅 url/headers（判别封闭：stdio 载荷不输出）
+            if (let Some(v) <- this.url) { w.writeName("url").writeValue(v) }
+            if (let Some(v) <- this.headers) {
+                w.writeName("headers")
+                w.startArray()
+                for (item in v) { item.toJson(w) }
+                w.endArray()
+            }
+        } else if (this.`type` == None) {
+            // stdio（type 缺省）：仅 command/args/env
+            if (let Some(v) <- this.command) { w.writeName("command").writeValue(v) }
+            if (let Some(v) <- this.args) {
+                w.writeName("args")
+                w.startArray()
+                for (item in v) { w.writeValue(item) }
+                w.endArray()
+            }
+            if (let Some(v) <- this.env) {
+                w.writeName("env")
+                w.startArray()
+                for (item in v) { item.toJson(w) }
+                w.endArray()
+            }
+        } else {
+            // 未知 type（_ 前缀 / 未来变体）：宽容保留全部已设字段
+            if (let Some(v) <- this.command) { w.writeName("command").writeValue(v) }
+            if (let Some(v) <- this.args) {
+                w.writeName("args")
+                w.startArray()
+                for (item in v) { w.writeValue(item) }
+                w.endArray()
+            }
+            if (let Some(v) <- this.env) {
+                w.writeName("env")
+                w.startArray()
+                for (item in v) { item.toJson(w) }
+                w.endArray()
+            }
+            if (let Some(v) <- this.url) { w.writeName("url").writeValue(v) }
+            if (let Some(v) <- this.headers) {
+                w.writeName("headers")
+                w.startArray()
+                for (item in v) { item.toJson(w) }
+                w.endArray()
+            }
         }
-        if (let Some(v) <- this.env) {
-            w.writeName("env")
-            w.startArray()
-            for (item in v) { item.toJson(w) }
-            w.endArray()
-        }
-        if (let Some(v) <- this.headers) {
-            w.writeName("headers")
-            w.startArray()
-            for (item in v) { item.toJson(w) }
-            w.endArray()
-        }
+        if (let Some(v) <- this._meta) { w.writeName("_meta").writeValue(v) }
         w.endObject()
     }
     public static func fromJson(r: JsonReader): McpServer {
+        let v = JsonValue.fromJson(r)
         let res = McpServer()
-        fromJsonObject(r,
-            ("name", {=> res.name = r.readValue<String>()}),
-            ("command", {=> res.command = r.readValue<Option<String>>()}),
-            ("type", {=> res.`type` = r.readValue<Option<String>>()}),
-            ("url", {=> res.url = r.readValue<Option<String>>()}),
-            ("args", {=> res.args = r.readValue<Option<ArrayList<String>>>()}),
-            ("env", {=> res.env = r.readValue<Option<ArrayList<EnvVariable>>>()}),
-            ("headers", {=> res.headers = r.readValue<Option<ArrayList<HttpHeader>>>()})
-        )
+        let obj = match (v) {
+            case JsonValue.Map(m) => m
+            case _ => throw Exception("McpServer must be an object")
+        }
+        res.name = optString(v["name"]) ?? ""
+        res.`type` = optString(v["type"])
+        let known = res.`type` == None || res.`type` == Some("http") || res.`type` == Some("sse")
+        for ((k, vv) in obj) {
+            match (k) {
+                case "name" => ()
+                case "type" => ()
+                case "command" =>
+                    if (known) { res.command = vv.asString() }
+                case "args" =>
+                    if (known) {
+                        match (vv) {
+                            case JsonValue.Array(items) =>
+                                let list = ArrayList<String>()
+                                for (i in items) { list.add(i.asString() ?? "") }
+                                res.args = Some(list)
+                            case _ => ()
+                        }
+                    }
+                case "env" =>
+                    if (known) {
+                        match (vv) {
+                            case JsonValue.Array(items) =>
+                                let list = ArrayList<EnvVariable>()
+                                for (i in items) { list.add(reparse<EnvVariable>(i)) }
+                                res.env = Some(list)
+                            case _ => ()
+                        }
+                    }
+                case "url" =>
+                    if (known) { res.url = vv.asString() }
+                case "headers" =>
+                    if (known) {
+                        match (vv) {
+                            case JsonValue.Array(items) =>
+                                let list = ArrayList<HttpHeader>()
+                                for (i in items) { list.add(reparse<HttpHeader>(i)) }
+                                res.headers = Some(list)
+                            case _ => ()
+                        }
+                    }
+                case "_meta" => res._meta = Some(vv)
+                case _ => () // 未知字段忽略
+            }
+        }
         res
     }
 }

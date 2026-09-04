@@ -19,6 +19,7 @@
 > **更新记录**：
 > - 2026-09-05 阶段1（P1/P2 框架项 A4/A2/E1/N1/C2/M1/A1/A3）+ 阶段2（Elicitation P0 全模块）完成，详见 [roadmap.md](roadmap.md)。
 > - 2026-09-05 A5 完成：`setInitialSessionState` 钩子（58 单测全绿，feat/jsonrpc-0.7.4 分支）。
+> - 2026-09-05 4.3 McpServer 判别封闭完成：三形态构造/过滤/宽容（61 单测全绿）。
 
 ---
 
@@ -153,7 +154,7 @@
 |------|------|------|
 | NewSession/Resume 响应：`modes(SessionModeState)`、`configOptions` | ✅ | `AcpAgent.setInitialSessionState` 钩子注入（load/resume 由各自回调自构响应）；无钩子时维持仅 sessionId |
 | `SessionInfo{sessionId,cwd,title,updatedAt,additionalDirectories}` | ✅ | session/list 用 |
-| McpServer（stdio/http/sse 三形态扁平字段收发） | 🟡 | 类型为扁平近似（command/args/env/type/url/headers），未按判别封闭；实际 MCP 连接=范围外 |
+| McpServer（stdio/http/sse 三形态） | ✅ | 判别封闭（`McpServer.stdio/http/sse` 构造 + `transport()`），形态内载荷序列化过滤、未知 type 宽容保留；实际 MCP 连接=范围外 |
 | AuthMethod{id,name,description,type(agent/terminal),args,env} | ✅ | terminal 登录 `AcpClient.terminalLogin` 已实现（env 覆盖、args 追加、退出码判成功） |
 
 ---
