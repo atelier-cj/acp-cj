@@ -26,6 +26,8 @@ public type TerminalOutputCallback = (TerminalIdRequest) -> TerminalOutputRespon
 public type TerminalWaitForExitCallback = (TerminalIdRequest) -> WaitForTerminalExitResponse
 public type TerminalKillCallback = (TerminalIdRequest) -> EmptyResult
 public type TerminalReleaseCallback = (TerminalIdRequest) -> EmptyResult
+public type ElicitationCreateCallback = (CreateElicitationRequest) -> CreateElicitationResponse
+public type ElicitationCompleteCallback = (ElicitationId /*elicitationId*/) -> Unit
 
 /**
  * AcpClient：ACP 客户端框架。
@@ -36,6 +38,7 @@ public class AcpClient {
     private let rpcClient: JsonRpcClient
     private var initialized: Bool = false
     private var sessionUpdateCb: ?SessionUpdateCallback = None
+    private var elicitationCompleteCb: ?ElicitationCompleteCallback = None
     private var errorCb: ?ErrorCallback = None
     // 扩展通知订阅表：method -> 回调列表
     private let notifLock = Mutex()
@@ -236,6 +239,11 @@ public class AcpClient {
 
     public func setOnSessionUpdate(cb: SessionUpdateCallback): Unit { this.sessionUpdateCb = Some(cb) }
 
+    /// 订阅 Agent 的 elicitation/complete 通知（URL 模式外部交互完成）
+    public func setOnElicitationComplete(cb: ElicitationCompleteCallback): Unit {
+        this.elicitationCompleteCb = Some(cb)
+    }
+
     public func setOnError(cb: ErrorCallback): Unit { this.errorCb = Some(cb) }
 
     /**
@@ -272,6 +280,10 @@ public class AcpClient {
     }
     public func setOnTerminalRelease(cb: TerminalReleaseCallback): Unit {
         this.registerTyped("terminal/release", cb)
+    }
+    /// 注册 elicitation/create 类型化处理（表单值由回调构造 CreateElicitationResponse）
+    public func setOnElicitationCreate(cb: ElicitationCreateCallback): Unit {
+        this.registerTyped("elicitation/create", cb)
     }
 
     /// 通用实现：解析 params 为 RQ → 调用回调 → 序列化 RS 为响应 result
@@ -323,25 +335,38 @@ public class AcpClient {
                     if (let Some(cb) <- this.sessionUpdateCb) {
                         cb(notif.sessionId, notif.update)
                     }
+                case "elicitation/complete" =>
+                    let notif = match (n.params) {
+                        case Some(p) => JsonValue.toObject<CompleteElicitationNotification>(p)
+                        case None => CompleteElicitationNotification()
+                    }
+                    if (let Some(cb) <- this.elicitationCompleteCb) {
+                        cb(notif.elicitationId)
+                    }
+                    this.dispatchOtherNotification(n.method, n.params)
                 case other =>
-                    // 其余通知（_ 前缀扩展通知、elicitation/complete 等）转交订阅者
-                    let cbs = synchronized(this.notifLock) {
-                        match (this.notifHandlers.get(other)) {
-                            case Some(list) => ArrayList<NotificationHandler>(list)
-                            case None => ArrayList<NotificationHandler>()
-                        }
-                    }
-                    let params = n.params ?? JsonValue.Null
-                    for (cb in cbs) {
-                        try {
-                            cb(other, params)
-                        } catch (e: Exception) {
-                            if (let Some(errCb) <- this.errorCb) { errCb(e) }
-                        }
-                    }
+                    this.dispatchOtherNotification(other, n.params)
             }
         } catch (e: Exception) {
             if (let Some(cb) <- this.errorCb) { cb(e) }
+        }
+    }
+
+    /// 把非 session/update 通知转交 onNotification 订阅者
+    private func dispatchOtherNotification(method: String, params: ?JsonValue): Unit {
+        let cbs = synchronized(this.notifLock) {
+            match (this.notifHandlers.get(method)) {
+                case Some(list) => ArrayList<NotificationHandler>(list)
+                case None => ArrayList<NotificationHandler>()
+            }
+        }
+        let p = params ?? JsonValue.Null
+        for (cb in cbs) {
+            try {
+                cb(method, p)
+            } catch (e: Exception) {
+                if (let Some(errCb) <- this.errorCb) { errCb(e) }
+            }
         }
     }
 }

@@ -544,6 +544,40 @@ public class AcpAgent {
         }
     }
 
+    /**
+     * elicitation/create 反向请求：向 Client 请求用户的结构化输入（form / url 模式）。
+     * 前置能力检查（规范 MUST NOT）：Client 未在 initialize 广告对应模式时返回
+     * -32602 Invalid params 语义错误。
+     */
+    public func createElicitation(req: CreateElicitationRequest,
+                                  timeout!: Duration = 5 * Duration.minute): Result<CreateElicitationResponse> {
+        var supported: Bool = false
+        match (this.clientCapabilities) {
+            case Some(c) =>
+                match (c.elicitation) {
+                    case Some(e) =>
+                        if (req.mode == ElicitationModeForm) { supported = e.form.isSome() }
+                        else if (req.mode == ElicitationModeUrl) { supported = e.url.isSome() }
+                        else { supported = true }  // 自定义/未来 mode 无法按标准能力判定 → 放行
+                    case None => ()
+                }
+            case None => ()
+        }
+        if (!supported) {
+            return Result.Err("[-32602] Client does not advertise elicitation mode: ${req.mode}")
+        }
+        synchronized(this.clientRequestLock) {
+            this.rpcServer.request<CreateElicitationRequest, CreateElicitationResponse>(
+                "elicitation/create", params: req, timeout: timeout)
+        }
+    }
+
+    /// URL 模式外部交互完成通知（Agent → Client；elicitationId 与原请求一致）
+    public func elicitationComplete(elicitationId: ElicitationId): Unit {
+        this.rpcServer.notify<CompleteElicitationNotification>("elicitation/complete",
+            params: CompleteElicitationNotification(elicitationId))
+    }
+
     // ===================== 反向调用（Agent → Client 请求） =====================
 
     public func requestPermission(sessionId: String, toolCall: ToolCallUpdate,

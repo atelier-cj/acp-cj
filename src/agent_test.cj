@@ -865,3 +865,137 @@ public func agent_protocol_version_negotiation() {
     client.close()
     agent.close()
 }
+
+// ===================== 阶段2 Elicitation 双端 =====================
+
+func makeElicitCaps(form: Bool, url: Bool): ClientCapabilities {
+    let caps = ClientCapabilities()
+    let elic = ElicitationCapabilities()
+    if (form) { elic.form = Some(EmptyCapability()) }
+    if (url) { elic.url = Some(EmptyCapability()) }
+    caps.elicitation = Some(elic)
+    caps
+}
+
+@Test
+public func agent_elicitation_requires_advertised_mode() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.start()
+    let client = AcpClient(pair.a())
+    // Client 只广告 form
+    match (client.connect(Implementation("test-client", "1.0.0"), makeElicitCaps(true, false))) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("connect failed: ${e}")
+    }
+    // url 未广告 → 拒绝（-32602 语义）
+    let u = CreateElicitationRequest.urlMode("sess_1", "授权", "https://example.com")
+    match (agent.createElicitation(u)) {
+        case Result.Ok(_) => @Fail("url mode must be rejected when not advertised")
+        case Result.Err(e) => @Expect(e.contains("-32602"), true)
+    }
+    // 未握手 clientCapabilities 时也拒绝
+    client.close()
+    agent.close()
+    let pair2 = PipePair()
+    let agent2 = AcpAgent(pair2.b(), "test-agent", "0.1.0")
+    agent2.start()
+    let client2 = AcpClient(pair2.a())
+    // 先不 connect 直接 newSession 失败……改用未广告普通 caps（elicitation=None 等价未握手）
+    match (client2.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("connect2 failed: ${e}")
+    }
+    match (agent2.createElicitation(CreateElicitationRequest.form("s", "x", ElicitationSchema()))) {
+        case Result.Ok(_) => @Fail("form mode must be rejected when elicitation not advertised")
+        case Result.Err(e) => @Expect(e.contains("-32602"), true)
+    }
+    client2.close()
+    agent2.close()
+}
+
+@Test
+public func agent_elicitation_form_accept_roundtrip() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.start()
+    let client = AcpClient(pair.a())
+    match (client.connect(Implementation("test-client", "1.0.0"), makeElicitCaps(true, true))) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("connect failed: ${e}")
+    }
+    // Client 类型化处理：返回 accept + 内容
+    client.setOnElicitationCreate({ req =>
+        let content = HashMap<String, JsonValue>()
+        content["strategy"] = JsonValue.String("balanced")
+        CreateElicitationResponse.accepted(content: Some(JsonValue.Map(content)))
+    })
+    // Agent 发起 form 请求
+    let schema = ElicitationSchema.of([("strategy", ElicitationPropertySchema.singleSelect(
+        ArrayList<String>(["conservative", "balanced"])))], required: Some(ArrayList<String>(["strategy"])))
+    let req = CreateElicitationRequest.form("sess_1", "如何重构？", schema, toolCallId: Some("call_1"))
+    match (agent.createElicitation(req)) {
+        case Result.Ok(resp) =>
+            @Expect(resp.action, "accept")
+            match (resp.content) {
+                case Some(JsonValue.Map(m)) =>
+                    match (m.get("strategy")) {
+                        case Some(JsonValue.String(s)) => @Expect(s, "balanced")
+                        case _ => @Fail("content.strategy missing")
+                    }
+                case _ => @Fail("accept content missing")
+            }
+        case Result.Err(e) => @Fail("createElicitation failed: ${e}")
+    }
+    // decline / cancel 路径
+    client.setOnElicitationCreate({ req => CreateElicitationResponse.declined() })
+    match (agent.createElicitation(req)) {
+        case Result.Ok(resp) => @Expect(resp.action, "decline")
+        case Result.Err(e) => @Fail("decline roundtrip failed: ${e}")
+    }
+    client.setOnElicitationCreate({ req => CreateElicitationResponse.cancelled() })
+    match (agent.createElicitation(req)) {
+        case Result.Ok(resp) => @Expect(resp.action, "cancel")
+        case Result.Err(e) => @Fail("cancel roundtrip failed: ${e}")
+    }
+    client.close()
+    agent.close()
+}
+
+@Test
+public func agent_elicitation_url_and_complete() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.start()
+    let client = AcpClient(pair.a())
+    match (client.connect(Implementation("test-client", "1.0.0"), makeElicitCaps(true, true))) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("connect failed: ${e}")
+    }
+    // url 模式：Client 同意打开（accept 无内容）
+    client.setOnElicitationCreate({ req =>
+        @Expect(req.mode, "url")
+        @Expect(req.url, Some("https://example.com/oauth"))
+        @Expect(req.elicitationId, Some("oauth-001"))
+        CreateElicitationResponse.accepted()
+    })
+    let req = CreateElicitationRequest.urlMode("sess_1", "授权", "https://example.com/oauth",
+        elicitationId: Some("oauth-001"))
+    match (agent.createElicitation(req)) {
+        case Result.Ok(resp) => @Expect(resp.action, "accept")
+        case Result.Err(e) => @Fail("url elicitation failed: ${e}")
+    }
+    // 外部交互完成 → elicitation/complete 通知送达 Client
+    let done = ArrayList<String>()
+    client.setOnElicitationComplete({ id => done.add(id) })
+    agent.elicitationComplete("oauth-001")
+    var tries: Int64 = 0
+    while (done.size == 0 && tries < 100) {
+        tries++
+        sleep(10 * Duration.millisecond)
+    }
+    @Expect(done.size, 1)
+    @Expect(done[0], "oauth-001")
+    client.close()
+    agent.close()
+}
