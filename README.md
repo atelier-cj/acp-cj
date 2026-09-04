@@ -157,7 +157,9 @@ export XDG_DATA_HOME=$PWD/.opencode-data
 | `session/request_permission`（Agent→Client 反向调用） | ✅ |
 | `terminal/*` `fs/*`（Agent→Client 反向调用便捷封装） | ✅ |
 | `$/cancel_request` | ✅ |
-| `elicitation/*` | 类型定义级（v1 范围外 UI） |
+| `elicitation/create` · `elicitation/complete` | ❌ 未实现（仅 `clientCapabilities.elicitation` 透传） |
+
+> 📋 完整对照 ACP v1 规范的逐项支持矩阵、差距清单与 Roadmap 见 [支持矩阵](docs/support.md)。
 
 `session/update` 判别：`user_message_chunk / agent_message_chunk / agent_thought_chunk / tool_call / tool_call_update / plan / available_commands_update / current_mode_update / config_option_update / session_info_update / usage_update` 全部支持。
 
@@ -171,6 +173,7 @@ cjpm test -j 16 --no-progress   # 39 个单元测试（types 往返 / transport 
 ## 文档
 
 - [设计文档](docs/design.md)
+- [支持矩阵（ACP v1 功能对照 / 差距 Roadmap）](docs/support.md)
 - [ACP 官方文档](https://agentclientprotocol.com/protocol/v1/overview)
 - [官方 schema](docs/schema/schema.json)
 - [pi-acp 参考实现](https://github.com/svkozak/pi-acp)
