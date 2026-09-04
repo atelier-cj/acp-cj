@@ -35,14 +35,18 @@ public class PromptContext {
     public let cwd: String
     private let emitFn: (SessionUpdate) -> Unit
     private let cancelFlag: AtomicBool
+    // 客户端在 initialize 中声明的能力查询（规范要求调用 fs/terminal/elicitation 前 MUST 检查）
+    private let capsQuery: () -> ?ClientCapabilities
 
     public init(sessionId: String, cwd: String, prompt: ArrayList<ContentBlock>,
-                emitFn: (SessionUpdate) -> Unit, cancelFlag: AtomicBool) {
+                emitFn: (SessionUpdate) -> Unit, cancelFlag: AtomicBool,
+                capsQuery: () -> ?ClientCapabilities) {
         this.sessionId = sessionId
         this.cwd = cwd
         this.prompt = prompt
         this.emitFn = emitFn
         this.cancelFlag = cancelFlag
+        this.capsQuery = capsQuery
     }
 
     public func emit(update: SessionUpdate): Unit { this.emitFn(update) }
@@ -56,6 +60,33 @@ public class PromptContext {
             }
         }
         out
+    }
+
+    /// 客户端在 initialize 中声明的能力（None = 尚未握手/未保存）
+    public func clientCaps(): ?ClientCapabilities { this.capsQuery() }
+
+    /// 客户端是否支持 fs/read_text_file（规范：不支持则 MUST NOT 调用）
+    public func canReadTextFile(): Bool {
+        match (this.capsQuery()) {
+            case Some(c) => c.fs.readTextFile
+            case None => false
+        }
+    }
+
+    /// 客户端是否支持 fs/write_text_file
+    public func canWriteTextFile(): Bool {
+        match (this.capsQuery()) {
+            case Some(c) => c.fs.writeTextFile
+            case None => false
+        }
+    }
+
+    /// 客户端是否支持全部 terminal/* 方法
+    public func canUseTerminal(): Bool {
+        match (this.capsQuery()) {
+            case Some(c) => c.terminal
+            case None => false
+        }
     }
 }
 
@@ -97,6 +128,8 @@ public class AcpAgent {
     // 认证门控：true 表示 session/new 前必须通过 authenticate（或终端登录）
     public var authRequired: Bool = false
     private var authenticated: Bool = false
+    // 客户端在 initialize 中声明的能力（握手后填充，供业务判断能否调用 fs/terminal/elicitation 等）
+    public var clientCapabilities: ?ClientCapabilities = None
 
     // 业务钩子
     private var promptHandler: ?PromptHandler = None
@@ -173,6 +206,8 @@ public class AcpAgent {
     private func handleInitialize(ctx: HandlerContext): HandlerResult {
         let params = ctx.getParams<InitializeRequest>()
         let requested = params?.protocolVersion ?? ProtocolVersionV1
+        // 保存客户端声明的能力（业务层在反向调用前据此做规范要求的能力检查）
+        if (let Some(p) <- params) { this.clientCapabilities = Some(p.clientCapabilities) }
         let resp = InitializeResponse()
         resp.protocolVersion = if (requested == this.protocolVersion) { requested } else { this.protocolVersion }
         resp.agentInfo = Some(this.agentInfo)
@@ -246,7 +281,8 @@ public class AcpAgent {
         // 串行执行：同一会话一次只处理一个回合
         synchronized(s.promptLock) {
             if (s.cancelFlag.load()) { s.cancelFlag.store(false) }
-            let pc = PromptContext(s.sessionId, s.cwd, params.prompt, { u => this.sessionUpdate(s.sessionId, u) }, s.cancelFlag)
+            let pc = PromptContext(s.sessionId, s.cwd, params.prompt, { u => this.sessionUpdate(s.sessionId, u) },
+                s.cancelFlag, { => this.clientCapabilities })
             let resp = handler(pc)
             // 若回合结束时取消标志仍为真，且处理器返回 end_turn，统一转为 cancelled
             let finalResp = if (s.cancelFlag.load() && resp.stopReason == StopReasonEndTurn) {

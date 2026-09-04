@@ -561,3 +561,78 @@ public func client_terminal_login_exit_code() {
         case Result.Err(e) => @Fail("terminalLogin failed: ${e}")
     }
 }
+
+// ===================== 1.1 clientCapabilities 保存与透出 =====================
+
+@Test
+public func agent_preserves_client_capabilities() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.setPromptHandler({ ctx =>
+        PromptResponse(StopReasonEndTurn)
+    })
+    agent.start()
+    let client = AcpClient(pair.a())
+
+    let caps = ClientCapabilities()
+    caps.fs.readTextFile = true
+    caps.fs.writeTextFile = true
+    caps.terminal = true
+    caps.auth.terminal = true
+    match (client.connect(Implementation("test-client", "1.0.0"), caps)) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("connect failed: ${e}")
+    }
+    // Agent 侧保存了客户端声明的能力
+    match (agent.clientCapabilities) {
+        case Some(c) =>
+            @Expect(c.fs.readTextFile, true)
+            @Expect(c.fs.writeTextFile, true)
+            @Expect(c.terminal, true)
+            @Expect(c.auth.terminal, true)
+        case None => @Fail("clientCapabilities not preserved")
+    }
+    client.close()
+    agent.close()
+}
+
+@Test
+public func agent_prompt_context_can_query_client_caps() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    // prompt 处理器内查询客户端能力（规范要求调用 fs/terminal 前检查）
+    let observed = ArrayList<String>()
+    agent.setPromptHandler({ ctx =>
+        observed.add("read=${ctx.canReadTextFile()}")
+        observed.add("write=${ctx.canWriteTextFile()}")
+        observed.add("terminal=${ctx.canUseTerminal()}")
+        observed.add("hasCaps=${!ctx.clientCaps().isNone()}")
+        PromptResponse(StopReasonEndTurn)
+    })
+    agent.start()
+    let client = AcpClient(pair.a())
+    let caps = ClientCapabilities()
+    caps.fs.readTextFile = true
+    caps.terminal = true
+    match (client.connect(Implementation("test-client", "1.0.0"), caps)) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("connect failed: ${e}")
+    }
+    match (client.newSession("/tmp/proj")) {
+        case Result.Ok(resp) =>
+            let sid = resp.sessionId
+            let blocks = ArrayList<ContentBlock>()
+            blocks.add(ContentBlock.ofText("hi"))
+            match (client.prompt(sid, blocks)) {
+                case Result.Ok(_) => ()
+                case Result.Err(e) => return @Fail("prompt failed: ${e}")
+            }
+        case Result.Err(e) => return @Fail("newSession failed: ${e}")
+    }
+    @Expect(observed.contains("read=true"), true)
+    @Expect(observed.contains("write=false"), true)
+    @Expect(observed.contains("terminal=true"), true)
+    @Expect(observed.contains("hasCaps=true"), true)
+    client.close()
+    agent.close()
+}
