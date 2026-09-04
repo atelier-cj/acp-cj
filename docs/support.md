@@ -20,6 +20,7 @@
 > - 2026-09-05 阶段1（P1/P2 框架项 A4/A2/E1/N1/C2/M1/A1/A3）+ 阶段2（Elicitation P0 全模块）完成，详见 [roadmap.md](roadmap.md)。
 > - 2026-09-05 A5 完成：`setInitialSessionState` 钩子（58 单测全绿，feat/jsonrpc-0.7.4 分支）。
 > - 2026-09-05 4.3 McpServer 判别封闭完成：三形态构造/过滤/宽容（61 单测全绿）。
+> - 2026-09-05 §5 章节同步：Initialization 版本协商语义核对（服务端原实现即合规，误标已除）+ Client 侧版本校验补强；Session Modes 初始注入行随 A5 转 ✅（62 单测全绿）。
 
 ---
 
@@ -164,13 +165,13 @@
 | 官方章节 | 状态 | 备注 |
 |----------|------|------|
 | [Overview](https://agentclientprotocol.com/protocol/v1/overview) | ✅ | 基线模型、错误处理、约定均符合 |
-| [Initialization](https://agentclientprotocol.com/protocol/v1/initialization) | ✅ | 🟡 版本协商简化（不回协议版本错误，只回自身 v1） |
+| [Initialization](https://agentclientprotocol.com/protocol/v1/initialization) | ✅ | 版本协商符合规范：支持则回同版本，否则回自身最新支持版本；Client 收到非 v1 响应即失败（`AcpClient.connect` 校验 + 单测） |
 | [Session Setup](https://agentclientprotocol.com/protocol/v1/session-setup) | ✅ | new/load/resume/close + additionalDirectories 字段收发；MCP 透传=范围外 |
 | [Prompt Turn](https://agentclientprotocol.com/protocol/v1/prompt-turn) | ✅ | 流式输出/工具调用/取消语义完整；usage_update helper 齐 |
 | [Tool Calls](https://agentclientprotocol.com/protocol/v1/tool-calls) | ✅ | 创建/更新/权限请求/终止语义 + locations |
 | [Agent Plan](https://agentclientprotocol.com/protocol/v1/agent-plan) | ✅ | plan/plan_entry 通知收发；整表替换语义由发送方负责 |
 | [Slash Commands](https://agentclientprotocol.com/protocol/v1/slash-commands) | ✅ | available_commands_update 收发 + 动态更新；命令解析属业务层 |
-| [Session Modes](https://agentclientprotocol.com/protocol/v1/session-modes) | ✅ | set_mode/current_mode_update/初始 availableModes（🟡 初始注入见 §7-A5） |
+| [Session Modes](https://agentclientprotocol.com/protocol/v1/session-modes) | ✅ | set_mode/current_mode_update/初始 availableModes（`setInitialSessionState` 注入，A5） |
 | [Session Config Options](https://agentclientprotocol.com/protocol/v1/session-config-options) | ✅ | select/boolean 双变体 + config_option_update + set_config_option |
 | [Cancellation](https://agentclientprotocol.com/protocol/v1/cancellation) | ✅ | session/cancel + $/cancel_request 双路径，取消后必须回 cancelled 已保证 |
 | [Authentication](https://agentclientprotocol.com/protocol/v1/authentication) | ✅ | 协议认证 + terminal 认证 + logout 全链路 e2e 验证（auth_required -32000 门控） |

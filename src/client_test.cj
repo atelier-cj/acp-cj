@@ -229,3 +229,22 @@ public func client_receives_extension_notification() {
     client.close()
     agent.close()
 }
+
+@Test
+public func client_connect_rejects_unsupported_protocol_version() {
+    // 规范：Client 收到不支持协议版本（Agent 侧声明最新支持为 v2）时应失败并提示，而非照常工作
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "fake-agent", "0.1.0")
+    agent.protocolVersion = 2   // 模拟未来 Agent：只支持 v2
+    agent.start()
+    let client = AcpClient(pair.a())
+    match (client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())) {
+        case Result.Ok(_) => @Fail("client must reject unsupported protocol version")
+        case Result.Err(e) =>
+            @Expect(e.contains("protocol version"), true)
+            @Expect(e.contains("2"), true)
+    }
+    @Expect(client.isConnected(), false)
+    client.close()
+    agent.close()
+}

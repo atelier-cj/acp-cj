@@ -62,6 +62,12 @@ public class AcpClient {
         let result = this.rpcClient.call<InitializeRequest, InitializeResponse>("initialize", params: req, timeout: timeout)
         match (result) {
             case Result.Ok(resp) =>
+                // 版本协商（规范）：Agent 回其最新支持的版本；本客户端仅支持 v1，
+                // 若响应版本不是 v1 则不应继续（Client SHOULD close connection）
+                if (resp.protocolVersion != ProtocolVersionV1) {
+                    this.rpcClient.close()
+                    return Result.Err("Unsupported protocol version from agent: ${resp.protocolVersion} (client supports ${ProtocolVersionV1})")
+                }
                 this.initialized = true
                 result
             case Result.Err(e) => result
