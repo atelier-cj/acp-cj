@@ -3,6 +3,7 @@ package acp
 import jsonvalue.*
 import ystyle::jsonrpc.{JsonRpcClient, Transport, NewlineFraming, RequestId, Notification, Request, Result}
 import std.collection.*
+import std.sync.Mutex
 import std.process.{launch, ProcessRedirect, SubProcess}
 import stdx.encoding.json.stream.*
 import acp.types.*
@@ -14,6 +15,8 @@ public type SessionUpdateCallback = (String /*sessionId*/, SessionUpdate) -> Uni
 public type PermissionCallback = (RequestPermissionRequest) -> RequestPermissionResponse
 public type AcpRequestHandler = (JsonValue /*params*/) -> ?JsonValue
 public type ErrorCallback = (Exception) -> Unit
+/// 非 session/update 通知的订阅回调（含 _ 前缀扩展通知、elicitation/complete 等）
+public type NotificationHandler = (String /*method*/, JsonValue /*params*/) -> Unit
 
 /**
  * AcpClient：ACP 客户端框架。
@@ -25,6 +28,9 @@ public class AcpClient {
     private var initialized: Bool = false
     private var sessionUpdateCb: ?SessionUpdateCallback = None
     private var errorCb: ?ErrorCallback = None
+    // 扩展通知订阅表：method -> 回调列表
+    private let notifLock = Mutex()
+    private let notifHandlers = HashMap<String, ArrayList<NotificationHandler>>()
 
     public init(transport: Transport) {
         this.rpcClient = JsonRpcClient(transport, framing: NewlineFraming())
@@ -231,6 +237,22 @@ public class AcpClient {
         this.rpcClient.registerRequestHandler(method, { req => this.dispatch(method, req, handler) })
     }
 
+    /**
+     * 订阅 Agent 发来的非 session/update 通知（_ 前缀扩展通知、elicitation/complete 等）。
+     * 可对同一 method 多次订阅（叠加生效）。
+     */
+    public func onNotification(method: String, cb: NotificationHandler): Unit {
+        synchronized(this.notifLock) {
+            match (this.notifHandlers.get(method)) {
+                case Some(list) => list.add(cb)
+                case None =>
+                    let list = ArrayList<NotificationHandler>()
+                    list.add(cb)
+                    this.notifHandlers[method] = list
+            }
+        }
+    }
+
     // ===================== 内部 =====================
 
     private func dispatch(method: String, req: Request, handler: AcpRequestHandler): ?JsonValue {
@@ -251,7 +273,22 @@ public class AcpClient {
                     if (let Some(cb) <- this.sessionUpdateCb) {
                         cb(notif.sessionId, notif.update)
                     }
-                case _ => () // 忽略未识别的 ACP 通知
+                case other =>
+                    // 其余通知（_ 前缀扩展通知、elicitation/complete 等）转交订阅者
+                    let cbs = synchronized(this.notifLock) {
+                        match (this.notifHandlers.get(other)) {
+                            case Some(list) => ArrayList<NotificationHandler>(list)
+                            case None => ArrayList<NotificationHandler>()
+                        }
+                    }
+                    let params = n.params ?? JsonValue.Null
+                    for (cb in cbs) {
+                        try {
+                            cb(other, params)
+                        } catch (e: Exception) {
+                            if (let Some(errCb) <- this.errorCb) { errCb(e) }
+                        }
+                    }
             }
         } catch (e: Exception) {
             if (let Some(cb) <- this.errorCb) { cb(e) }

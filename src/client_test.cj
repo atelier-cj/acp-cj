@@ -195,3 +195,37 @@ public func client_prompt_streams_notification() {
     client.close()
     agent.server.close()
 }
+
+@Test
+public func client_receives_extension_notification() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "fake-agent", "0.1.0")
+    agent.start()
+
+    let client = AcpClient(pair.a())
+    let got = ArrayList<String>()
+    client.onNotification("_hello", { method, params =>
+        got.add(method)
+        match (params) {
+            case JsonValue.String(s) => got.add("param:" + s)
+            case _ => got.add("param:none")
+        }
+    })
+    client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())
+
+    // Agent 发扩展通知（带参数）
+    agent.sendExtensionNotification("_hello", params: Some(JsonValue.String("world")))
+    // Agent 发未订阅的通知（应被忽略不报错）
+    agent.sendExtensionNotification("_ignored")
+
+    var tries: Int64 = 0
+    while (got.size == 0 && tries < 100) {
+        tries++
+        sleep(10 * Duration.millisecond)
+    }
+    @Expect(got.size, 2)
+    @Expect(got[0], "_hello")
+    @Expect(got[1], "param:world")
+    client.close()
+    agent.close()
+}

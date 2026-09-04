@@ -526,6 +526,14 @@ public class AcpAgent {
         this.rpcServer.notify<SessionNotification>("session/update", params: notif)
     }
 
+    /// 发送 ACP 扩展通知（Agent → Client，方法名按约定以 `_` 开头）
+    public func sendExtensionNotification(method: String, params!: ?JsonValue = None): Unit {
+        match (params) {
+            case Some(p) => this.rpcServer.notify<JsonValue>(method, params: p)
+            case None => this.rpcServer.notify(method)
+        }
+    }
+
     // ===================== 反向调用（Agent → Client 请求） =====================
 
     public func requestPermission(sessionId: String, toolCall: ToolCallUpdate,
