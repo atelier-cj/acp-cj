@@ -77,45 +77,47 @@
 
 ### 2.1 类型层 `src/types/elicitation.cj`（新文件）
 
-- [ ] `ElicitationSchemaType`（判别常量 `"object"`）
-- [ ] `ElicitationSchema`（type/title/properties/required/description/_meta）
-- [ ] 属性 schema 族：`StringPropertySchema`（含 enum 单选与 `StringFormat`）、`NumberPropertySchema`、`IntegerPropertySchema`、`BooleanPropertySchema`、`MultiSelectPropertySchema`（items：string / titled）、`EnumOption`、`ElicitationPropertySchema` 判别联合（string/number/integer/boolean/array/other `_` 前缀兜底）
-- [ ] 作用域：`ElicitationSessionScope{sessionId, toolCallId?}` / `ElicitationRequestScope{requestId}`（requestId 复用 jsonrpc 的 Int/String 形式）
-- [ ] 模式：`ElicitationFormMode{requestedSchema}` / `ElicitationUrlMode{elicitationId, url}` + scope 联合
-- [ ] `CreateElicitationRequest`（sessionScope/requestScope + formMode/urlMode 判别 + message 必填 + _meta）
-- [ ] 响应：`CreateElicitationResponse` 判别（`accept{content?}` / `decline` / `cancel` / other `_` 前缀兜底），`ElicitationAcceptAction`、`ElicitationContentValue`（string/integer/number/boolean/string-array）
-- [ ] `CompleteElicitationNotification{elicitationId, _meta}`、`ElicitationId` 类型别名
-- [ ] 测试：全部类型 JSON 往返矩阵 + 未知/容错路径
-- [ ] 提交
+- [x] `ElicitationSchemaType`（判别常量 `"object"`）
+- [x] `ElicitationSchema`（type/title/properties/required/description/_meta）
+- [x] 属性 schema 族：`StringPropertySchema`（含 enum 单选与 `StringFormat`）、`NumberPropertySchema`、`IntegerPropertySchema`、`BooleanPropertySchema`、`MultiSelectPropertySchema`（items：string / titled）、`EnumOption`、`ElicitationPropertySchema` 判别联合（string/number/integer/boolean/array/other `_` 前缀兜底）
+- [x] 作用域：`ElicitationSessionScope{sessionId, toolCallId?}` / `ElicitationRequestScope{requestId}`（requestId 复用 jsonrpc 的 Int/String 形式）
+- [x] 模式：`ElicitationFormMode{requestedSchema}` / `ElicitationUrlMode{elicitationId, url}` + scope 联合
+- [x] `CreateElicitationRequest`（sessionScope/requestScope + formMode/urlMode 判别 + message 必填 + _meta）
+- [x] 响应：`CreateElicitationResponse` 判别（`accept{content?}` / `decline` / `cancel` / other `_` 前缀兜底），`ElicitationAcceptAction`、`ElicitationContentValue`（string/integer/number/boolean/string-array）
+- [x] `CompleteElicitationNotification{elicitationId, _meta}`、`ElicitationId` 类型别名
+- [x] 测试：全部类型 JSON 往返矩阵 + 未知/容错路径
+- [x] 提交
 
 ### 2.2 ClientCapabilities.elicitation 结构化（breaking → 0.2.0）
 
-- [ ] `ElicitationCapabilities{form?, url?}` / `ElicitationFormCapabilities{}` / `ElicitationUrlCapabilities{}`（EmptyCapability 语义复用）
-- [ ] `ClientCapabilities.elicitation: ?JsonValue` 换成结构化类型，序列化保持「省略/null = 不支持、`{}` 空对象 = 支持该模式」语义
-- [ ] 测试：能力广告往返（含 form/url 单独与组合）
-- [ ] 提交
+- [x] `ElicitationCapabilities{form?, url?}` / `ElicitationFormCapabilities{}` / `ElicitationUrlCapabilities{}`（EmptyCapability 语义复用）
+- [x] `ClientCapabilities.elicitation: ?JsonValue` 换成结构化类型，序列化保持「省略/null = 不支持、`{}` 空对象 = 支持该模式」语义
+- [x] 测试：能力广告往返（含 form/url 单独与组合）
+- [x] 提交
 
 ### 2.3 Agent 侧
 
-- [ ] `AcpAgent.createElicitation(...)` 反向请求（form/url 两种载荷 + 两种 scope 的重载或参数对象）+ `AcpAgent.elicitationComplete(elicitationId)` 通知
-- [ ] **前置能力检查**：发起前按 1.1 的 clientCapabilities 校验模式已广告（form/url），未广告返回 `-32602`（规范 MUST NOT）
-- [ ] 测试：Agent→Client 双端 create 全流程（accept/decline/cancel 三响应路径）+ complete 通知
-- [ ] 提交
+- [x] `AcpAgent.createElicitation(...)` 反向请求（form/url 两种载荷 + 两种 scope 的重载或参数对象）+ `AcpAgent.elicitationComplete(elicitationId)` 通知
+- [x] **前置能力检查**：发起前按 1.1 的 clientCapabilities 校验模式已广告（form/url），未广告返回 `-32602`（规范 MUST NOT）
+- [x] 测试：Agent→Client 双端 create 全流程（accept/decline/cancel 三响应路径）+ complete 通知
+- [x] 提交
 
 ### 2.4 Client 侧
 
-- [ ] `AcpClient.setOnElicitationCreate(cb)` 类型化请求处理（返回 accept/decline/cancel 构造 helper：`ElicitationResponse.accepted(content)` 等）
-- [ ] `handleNotification` 增加 `elicitation/complete` 分发（依赖 1.4 的订阅口或独立回调）
-- [ ] 测试：同上双端用例覆盖 Client 侧回调与响应载荷
-- [ ] 提交
+- [x] `AcpClient.setOnElicitationCreate(cb)` 类型化请求处理（返回 accept/decline/cancel 构造 helper：`ElicitationResponse.accepted(content)` 等）
+- [x] `handleNotification` 增加 `elicitation/complete` 分发（依赖 1.4 的订阅口或独立回调）
+- [x] 测试：同上双端用例覆盖 Client 侧回调与响应载荷
+- [x] 提交
 
 ### 2.5 双端集成 + 文档同步
 
-- [ ] MemoryPipe 双端集成用例：能力广告（form+url）→ create(form) → accept(content) → create(url) → decline/cancel 路径 → complete 通知
-- [ ] support.md：Elicitation 章节/矩阵标记 ✅，§7 P0 勾除；README「协议支持」表格更新
-- [ ] 提交
+- [x] MemoryPipe 双端集成用例：能力广告（form+url）→ create(form) → accept(content) → create(url) → decline/cancel 路径 → complete 通知
+- [x] support.md：Elicitation 章节/矩阵标记 ✅，§7 P0 勾除；README「协议支持」表格更新
+- [x] 提交
 
 **阶段 2 出口条件**：全量单测绿（存量 39 + 新增），Elicitation 章节覆盖度 100%。
+
+> ✅ 阶段 2 已完成（2026-09-05）：类型层（elicitation.cj 16 defs 全覆盖 + capabilities 结构化）、双端 API 与能力门控全部落地，55 单测全绿（提交 93b3878 / e22783d）。
 
 ---
 
