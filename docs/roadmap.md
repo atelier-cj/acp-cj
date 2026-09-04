@@ -27,45 +27,47 @@
 
 ### 1.1 clientCapabilities 保存与透出（A4）
 
-- [ ] `AcpAgent.handleInitialize` 保存握手收到的 `ClientCapabilities`（新增 `public var clientCapabilities: ?ClientCapabilities`，握手后填充）
-- [ ] `PromptContext` 携带同一引用，提供查询方法（如 `hasFs() / hasTerminal() / hasElicitation(mode)` 或直接 `clientCapabilities()`），供 prompt 处理器做规范要求的「调用 fs/terminal/elicitation 前 MUST 检查能力」
-- [ ] 测试：握手后 AcpAgent 可查询；prompt 处理器内可查询（FakeAgent/MemoryPipe 双端用例）
-- [ ] 提交
+- [x] `AcpAgent.handleInitialize` 保存握手收到的 `ClientCapabilities`（新增 `public var clientCapabilities: ?ClientCapabilities`，握手后填充）
+- [x] `PromptContext` 携带同一引用，提供查询方法（如 `hasFs() / hasTerminal() / hasElicitation(mode)` 或直接 `clientCapabilities()`），供 prompt 处理器做规范要求的「调用 fs/terminal/elicitation 前 MUST 检查能力」
+- [x] 测试：握手后 AcpAgent 可查询；prompt 处理器内可查询（FakeAgent/MemoryPipe 双端用例）
+- [x] 提交
 
 ### 1.2 authenticate 参数校验（A2）
 
-- [ ] `handleAuthenticate`：校验 `methodId` 必须存在于 `authMethods` 且该方法 `type` 不是 `"terminal"`（规范：terminal 型不得走协议 authenticate）；不合法回 `-32602`，合法才置位认证
-- [ ] 测试：未广告 methodId → -32602；terminal 型 methodId → -32602；合法 → 成功
-- [ ] 提交
+- [x] `handleAuthenticate`：校验 `methodId` 必须存在于 `authMethods` 且该方法 `type` 不是 `"terminal"`（规范：terminal 型不得走协议 authenticate）；不合法回 `-32602`，合法才置位认证
+- [x] 测试：未广告 methodId → -32602；terminal 型 methodId → -32602；合法 → 成功
+- [x] 提交
 
 ### 1.3 Agent 侧扩展方法注册口（E1）
 
-- [ ] `AcpAgent.registerExtensionMethod(method: String, handler)`：注册 `_` 前缀自定义请求（约定检查 `_` 开头，非 `_` 开头直接拒绝/警告由实现定）
-- [ ] 测试：注册 `_foo` 后 client 侧可调用并收到结果；未注册返回 `-32601`
-- [ ] 提交
+- [x] `AcpAgent.registerExtensionMethod(method: String, handler)`：注册 `_` 前缀自定义请求（约定检查 `_` 开头，非 `_` 开头直接拒绝/警告由实现定）
+- [x] 测试：注册 `_foo` 后 client 侧可调用并收到结果；未注册返回 `-32601`
+- [x] 提交
 
 ### 1.4 Client 侧扩展通知订阅口（N1）
 
-- [ ] `AcpClient.setOnNotification(method: String, cb)`：目前 `handleNotification` 只分发 `session/update`，其他（含 `_` 扩展通知、后续 elicitation/complete）转交订阅者
-- [ ] 测试：Agent 侧发自定义通知 → Client 收到
-- [ ] 提交
+- [x] `AcpClient.setOnNotification(method: String, cb)`：目前 `handleNotification` 只分发 `session/update`，其他（含 `_` 扩展通知、后续 elicitation/complete）转交订阅者
+- [x] 测试：Agent 侧发自定义通知 → Client 收到
+- [x] 提交
 
 ### 1.5 Client 侧反向方法类型化 handler（C2）
 
-- [ ] 新增类型化注册 API（与现有通用 `on(method, handler)` 并存）：
+- [x] 新增类型化注册 API（与现有通用 `on(method, handler)` 并存）：
   `setOnRequestPermission(cb: (RequestPermissionRequest) -> RequestPermissionResponse)`
   `setOnReadTextFile` / `setOnWriteTextFile` / `setOnCreateTerminal` / `setOnTerminalOutput` / `setOnTerminalWaitForExit` / `setOnTerminalKill` / `setOnTerminalRelease`
-- [ ] 测试：Agent 经 MemoryPipe 反向调用各类方法 → Client 类型化回调触发、响应正确序列化
-- [ ] 提交
+- [x] 测试：Agent 经 MemoryPipe 反向调用各类方法 → Client 类型化回调触发、响应正确序列化
+- [x] 提交
 
 ### 1.6 细节打磨（M1/A1/A3 合并提交）
 
-- [ ] **M1 `_meta` 补齐**：给主要请求/响应类型补 `_meta: Option<JsonValue>` 收发（InitializeRequest/Response 已有；重点：NewSessionRequest、PromptRequest、RequestPermissionRequest、terminal/fs 请求等）
-- [ ] **A1 cwd 绝对路径校验**：`session/new` 按规范校验绝对路径（查 std lib 有无现成判断，无则按平台惯例 `'/'` 或盘符前缀检查）
-- [ ] **A3 版本协商**：客户端请求的 protocolVersion 不支持时行为按规范核对（当前直接回自身版本；如规范要求可接受则补测试固化该语义，避免误改）
-- [ ] 测试 + 提交
+- [x] **M1 `_meta` 补齐**：给主要请求/响应类型补 `_meta: Option<JsonValue>` 收发（InitializeRequest/Response 已有；重点：NewSessionRequest、PromptRequest、RequestPermissionRequest、terminal/fs 请求等）
+- [x] **A1 cwd 绝对路径校验**：`session/new` 按规范校验绝对路径（查 std lib 有无现成判断，无则按平台惯例 `'/'` 或盘符前缀检查）
+- [x] **A3 版本协商**：客户端请求的 protocolVersion 不支持时行为按规范核对（当前直接回自身版本；如规范要求可接受则补测试固化该语义，避免误改）
+- [x] 测试 + 提交
 
 **阶段 1 出口条件**：单测全绿；support.md §7 的 P1/P2 项对应勾除（A4/A2/E1/N1/C2/M1/A1/A3 完成）。
+
+> ✅ 阶段 1 已完成（2026-09-05）：1.1~1.6 全部落地，48 单测全绿（提交 7e81d7c/a56d07b/18e6cc4/5c81eca/c715f6a/e57a4b4）。M1 说明：为 22 个请求/响应类型补 `_meta`，其余类型维持「未知字段宽容透传」。
 
 ---
 
