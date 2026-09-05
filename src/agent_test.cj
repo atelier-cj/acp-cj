@@ -1159,3 +1159,39 @@ public func agent_new_session_with_additional_directories() {
     client.close()
     agent.close()
 }
+
+// session/new 携带 mcpServers → 宿主查询（McpServer 配置原样返回）
+@Test
+public func agent_new_session_mcp_servers_queryable() {
+    let pair = PipePair()
+    let agent = makeEchoAgent(pair)
+    let client = AcpClient(pair.a())
+    client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())
+
+    let servers = ArrayList<McpServer>()
+    servers.add(McpServer.stdio("fs", "npx", args: ArrayList<String>(["-y", "@modelcontextprotocol/server-filesystem"])))
+    servers.add(McpServer.http("docs", "https://example.com/mcp"))
+    let newResult = client.newSession("/tmp/proj", mcpServers: servers)
+    let sessionId = match (newResult) {
+        case Result.Ok(resp) => resp.sessionId
+        case Result.Err(e) => return @Fail("newSession failed: ${e}")
+    }
+    var i: Int64 = 0
+    var found: ?ArrayList<McpServer> = None
+    while (i < 50 && found.isNone()) {
+        i++
+        found = agent.sessionMcpServers(sessionId)
+        if (found.isNone()) { sleep(10 * Duration.millisecond) }
+    }
+    match (found) {
+        case Some(list) =>
+            @Expect(list.size, 2)
+            @Expect(list[0].name, "fs")
+            @Expect(list[1].name, "docs")
+            @Expect(list[1].url.isSome(), true)
+        case None => @Fail("mcpServers not stored")
+    }
+    @Expect(agent.sessionMcpServers("sess_unknown").isNone(), true)
+    client.close()
+    agent.close()
+}
