@@ -217,6 +217,16 @@ public class AcpAgent {
     // 是否已认证（未启用门控时恒为 true）
     public func isAuthenticated(): Bool { !this.authRequired || this.authenticated }
 
+    // 会话声明的 MCP server 配置（session/new 携带；宿主可按需建立连接，未知会话返回 None）
+    public func sessionMcpServers(sessionId: String): ?ArrayList<McpServer> {
+        synchronized(this.sessionLock) {
+            match (this.sessions.get(sessionId)) {
+                case Some(s) => Some(s.mcpServers)
+                case None => None
+            }
+        }
+    }
+
     // 会话声明的附加工作区根（session/new 携带；未知会话返回 None）
     public func sessionAdditionalDirectories(sessionId: String): ?ArrayList<String> {
         synchronized(this.sessionLock) {
