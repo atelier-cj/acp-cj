@@ -30,7 +30,7 @@
 
 ```toml
 [dependencies]
-  acp = "0.2.0"   # 中心仓版本；本地开发可用 { path = "../acp-cj" }
+  acp = "0.2.1"   # 中心仓版本；本地开发可用 { path = "../acp-cj" }
 ```
 
 ```bash
