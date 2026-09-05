@@ -30,7 +30,7 @@
 
 ```toml
 [dependencies]
-  acp = "0.1.1"   # 中心仓版本；本地开发可用 { path = "../acp-cj" }
+  acp = "0.2.0"   # 中心仓版本；本地开发可用 { path = "../acp-cj" }
 ```
 
 ```bash
@@ -171,7 +171,7 @@ export XDG_DATA_HOME=$PWD/.opencode-data
 ## 测试
 
 ```bash
-cjpm test -j 16 --no-progress   # 39 个单元测试（types 往返 / transport / client / agent）
+cjpm test -j 16 --no-progress   # 63 个单元测试（types 往返 / transport / client / agent / elicitation）
 ./scripts/test-e2e-bridge.sh    # 真实环境端到端（需要 opencode + LLM key）
 ```
 
