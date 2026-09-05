@@ -1094,3 +1094,32 @@ public func agent_new_session_without_initial_state_handler() {
     client.close()
     agent.close()
 }
+
+// session/delete 成功后内部会话状态清理：后续 prompt 该 id 返回 -32602
+@Test
+public func agent_delete_clearsInternalSession() {
+    let pair = PipePair()
+    let agent = makeEchoAgent(pair)
+    agent.setOnDeleteSession({ sid => true })
+    let client = AcpClient(pair.a())
+    client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())
+
+    let newResult = client.newSession("/tmp/proj")
+    let sessionId = match (newResult) {
+        case Result.Ok(resp) => resp.sessionId
+        case Result.Err(e) => return @Fail("newSession failed: ${e}")
+    }
+    // delete 成功
+    match (client.deleteSession(sessionId)) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("delete failed: ${e}")
+    }
+    // 删除后 prompt 同 id → -32602（内部状态已清理）
+    let pResult = client.promptText(sessionId, "hi")
+    match (pResult) {
+        case Result.Ok(_) => @Fail("expected error for deleted session")
+        case Result.Err(e) => @Expect(e.contains("-32602"), true)
+    }
+    client.close()
+    agent.close()
+}
