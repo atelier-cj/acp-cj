@@ -1123,3 +1123,39 @@ public func agent_delete_clearsInternalSession() {
     client.close()
     agent.close()
 }
+
+// session/new 携带附加工作区 → SessionState 保存且可查询
+@Test
+public func agent_new_session_with_additional_directories() {
+    let pair = PipePair()
+    let agent = makeEchoAgent(pair)
+    agent.capabilities.sessionCapabilities.additionalDirectories = Some(EmptyCapability())
+    let client = AcpClient(pair.a())
+    client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())
+
+    let dirs = ArrayList<String>(["/work/a", "/data/b"])
+    let newResult = client.newSession("/tmp/proj", additionalDirectories: Some(dirs))
+    let sessionId = match (newResult) {
+        case Result.Ok(resp) => resp.sessionId
+        case Result.Err(e) => return @Fail("newSession failed: ${e}")
+    }
+    // 宿主查询（session/new 回调之后可用）
+    var i: Int64 = 0
+    var found: ?ArrayList<String> = None
+    while (i < 50 && found.isNone()) {
+        i++
+        found = agent.sessionAdditionalDirectories(sessionId)
+        if (found.isNone()) { sleep(10 * Duration.millisecond) }
+    }
+    match (found) {
+        case Some(list) =>
+            @Expect(list.size, 2)
+            @Expect(list[0], "/work/a")
+            @Expect(list[1], "/data/b")
+        case None => @Fail("additionalDirectories not stored")
+    }
+    // 未知会话
+    @Expect(agent.sessionAdditionalDirectories("sess_unknown").isNone(), true)
+    client.close()
+    agent.close()
+}

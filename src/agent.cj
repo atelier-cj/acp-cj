@@ -104,14 +104,22 @@ public class SessionState {
     public let sessionId: String
     public let cwd: String
     public let mcpServers: ArrayList<McpServer>
+    // 客户端声明的附加工作区根（session/new 携带；宿主按需用于信任/作用域扩展）
+    public let additionalDirectories: ArrayList<String>
     public let cancelFlag = AtomicBool(false)
     // 同一会话同一时刻只允许一个进行中的回合
     public let promptLock = Mutex()
 
-    public init(sessionId: String, cwd: String, mcpServers: ArrayList<McpServer>) {
+    public init(sessionId: String, cwd: String, mcpServers: ArrayList<McpServer>,
+        additionalDirectories: ArrayList<String>) {
         this.sessionId = sessionId
         this.cwd = cwd
         this.mcpServers = mcpServers
+        this.additionalDirectories = additionalDirectories
+    }
+
+    public init(sessionId: String, cwd: String, mcpServers: ArrayList<McpServer>) {
+        this(sessionId, cwd, mcpServers, ArrayList<String>())
     }
 }
 
@@ -209,6 +217,16 @@ public class AcpAgent {
     // 是否已认证（未启用门控时恒为 true）
     public func isAuthenticated(): Bool { !this.authRequired || this.authenticated }
 
+    // 会话声明的附加工作区根（session/new 携带；未知会话返回 None）
+    public func sessionAdditionalDirectories(sessionId: String): ?ArrayList<String> {
+        synchronized(this.sessionLock) {
+            match (this.sessions.get(sessionId)) {
+                case Some(s) => Some(s.additionalDirectories)
+                case None => None
+            }
+        }
+    }
+
     // ===================== 生命周期 =====================
 
     public func start(): Unit { this.rpcServer.start() }
@@ -278,7 +296,8 @@ public class AcpAgent {
             return HandlerResult.err(AUTH_REQUIRED, "Authentication required", data: JsonValue.Map(data))
         }
         let sessionId = "sess_" + this.sonyflake.NextID().toString()
-        let state = SessionState(sessionId, params.cwd, params.mcpServers)
+        let dirs = params.additionalDirectories ?? ArrayList<String>()
+        let state = SessionState(sessionId, params.cwd, params.mcpServers, dirs)
         synchronized(this.sessionLock) {
             this.sessions.add(sessionId, state)
         }
