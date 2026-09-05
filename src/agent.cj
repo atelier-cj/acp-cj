@@ -512,6 +512,13 @@ public class AcpAgent {
         match (this.deleteSessionCb) {
             case Some(cb) =>
                 if (cb(sessionId)) {
+                    // 删除成功后清理内部会话状态：后续 prompt 该 id 返回 -32602
+                    synchronized(this.sessionLock) {
+                        match (this.sessions.remove(sessionId)) {
+                            case Some(s) => s.cancelFlag.store(true)
+                            case None => ()
+                        }
+                    }
                     HandlerResult.ok(JsonValue.fromObject(EmptyResult()))
                 } else {
                     HandlerResult.err(RESOURCE_NOT_FOUND, "Unknown sessionId: ${sessionId}")
