@@ -6,6 +6,7 @@ import jsonvalue.*
 import ystyle::jsonrpc.{Result, JsonRpcError}
 import std.collection.*
 import std.sync.*
+import std.time.DateTime
 
 // ===================== Agent 单元测试 =====================
 // 使用内存管道对：AcpClient(pipe.a()) ↔ AcpAgent(pipe.b())
@@ -840,6 +841,96 @@ public func agent_typed_reverse_handlers_roundtrip() {
         case Result.Ok(_) => ()
         case Result.Err(e) => return @Fail("terminalRelease failed: ${e}")
     }
+    client.close()
+    agent.close()
+}
+
+// ===================== 1.55 反向调用并发（jsonrpc 0.7.5：撤掉串行锁） =====================
+//
+// 此前 jsonrpc ≤0.7.4 的 `JsonRpcServer.request()` 只有一个挂起槽（id 恒为 0），并发在飞会
+// 丢响应/串台，acp-cj 只能用一个 clientRequestLock 把 9 个反向调用全串起来 —— 锁横跨整个
+// 往返，`terminal/wait_for_exit`（超时 10 分钟）期间连一次 `fs/read_text_file` 都发不出去。
+// jsonrpc 0.7.5 起 `request()` 按 id 配对，本用例断言两个反向请求**真正重叠**且各拿各的结果。
+
+// 跨协程收集（lambda 不能捕获可变局部变量）
+class ReverseCallBox {
+    private let lock = Mutex()
+    private let cond: Condition
+    private var value: ?String = None
+
+    public init() {
+        this.cond = synchronized(this.lock) { this.lock.condition() }
+    }
+
+    public func set(v: String): Unit {
+        synchronized(this.lock) {
+            this.value = Some(v)
+            this.cond.notifyAll()
+        }
+    }
+
+    public func wait(timeoutMs: Int64): String {
+        synchronized(this.lock) {
+            var waited: Int64 = 0
+            while (this.value.isNone() && waited < timeoutMs) {
+                this.cond.wait(timeout: 100 * Duration.millisecond)
+                waited += 100
+            }
+            match (this.value) {
+                case Some(v) => v
+                case None => "<no result>"
+            }
+        }
+    }
+}
+
+@Test
+public func agent_concurrent_reverse_requests_overlap_and_pair_by_id() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.start()
+    let client = AcpClient(pair.a())
+    match (client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("connect failed: ${e}")
+    }
+    // 每个反向请求固定耗时 400ms，回自己那条 path —— 串行 vs 并发由总耗时区分
+    client.setOnReadTextFile({ req =>
+        sleep(Duration.millisecond * 400)
+        let r = ReadTextFileResponse()
+        r.content = "content of ${req.path}"
+        r
+    })
+
+    let box = ReverseCallBox()
+    let first = ReadTextFileRequest()
+    first.sessionId = "s1"
+    first.path = "/tmp/first.txt"
+    let t0 = DateTime.now().toUnixTimeStamp().toMilliseconds()
+    spawn {
+        box.set(match (agent.readTextFile(first)) {
+            case Result.Ok(r) => r.content
+            case Result.Err(e) => "ERR: ${e}"
+        })
+    }
+    sleep(Duration.millisecond * 50)
+    let second = ReadTextFileRequest()
+    second.sessionId = "s1"
+    second.path = "/tmp/second.txt"
+    let t1 = DateTime.now().toUnixTimeStamp().toMilliseconds()
+    let secondContent = match (agent.readTextFile(second)) {
+        case Result.Ok(r) => r.content
+        case Result.Err(e) => "ERR: ${e}"
+    }
+    let secondElapsed = DateTime.now().toUnixTimeStamp().toMilliseconds() - t1
+
+    // ① 各自拿到自己的内容（按 id 配对，不串台）
+    @Expect(secondContent, "content of /tmp/second.txt")
+    @Expect(box.wait(3000), "content of /tmp/first.txt")
+    // ② 真正重叠：第二个请求只等自己那 400ms，而不是「等第一个跑完再等自己那 400ms」（≈800ms）
+    @Expect(secondElapsed < 650, true)
+    @Expect(DateTime.now().toUnixTimeStamp().toMilliseconds() - t0 < 1100, true)
+
     client.close()
     agent.close()
 }

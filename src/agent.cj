@@ -162,8 +162,6 @@ public class AcpAgent {
     private var onAuthenticatedCb: ?CancelRequestCallback = None
     private var onLoggedOutCb: ?CancelRequestCallback = None
 
-    // server 主动 request client 的串行锁（jsonrpc 0.7.2 server.request 单挂起）
-    private let clientRequestLock = Mutex()
     // $/cancel_request 支持：JSON-RPC 请求 id -> 进行中的 prompt 所在会话
     private let activePrompts = HashMap<String, String>()
 
@@ -618,10 +616,8 @@ public class AcpAgent {
         if (!supported) {
             return Result.Err("[-32602] Client does not advertise elicitation mode: ${req.mode}")
         }
-        synchronized(this.clientRequestLock) {
-            this.rpcServer.request<CreateElicitationRequest, CreateElicitationResponse>(
-                "elicitation/create", params: req, timeout: timeout)
-        }
+        this.rpcServer.request<CreateElicitationRequest, CreateElicitationResponse>(
+            "elicitation/create", params: req, timeout: timeout)
     }
 
     /// URL 模式外部交互完成通知（Agent → Client；elicitationId 与原请求一致）
@@ -631,6 +627,12 @@ public class AcpAgent {
     }
 
     // ===================== 反向调用（Agent → Client 请求） =====================
+    //
+    // 这里**不再**用调用方锁把反向调用串行化。此前 jsonrpc ≤0.7.4 的
+    // `JsonRpcServer.request()` 只有一个挂起槽（且 id 恒为 0），并发在飞会丢响应/串台，
+    // 所以 acp-cj 用一个 clientRequestLock 把 9 个反向调用全串起来 —— 代价是锁横跨整个
+    // 往返：terminal/wait_for_exit 超时可达 10 分钟，期间连一次 fs/read_text_file 都发不出去。
+    // jsonrpc 0.7.5 起 `request()` 按 id 配对（每个在飞请求一个等待槽），可以真正并发。
 
     public func requestPermission(sessionId: String, toolCall: ToolCallUpdate,
                                   options: ArrayList<PermissionOption>,
@@ -639,51 +641,35 @@ public class AcpAgent {
         req.sessionId = sessionId
         req.toolCall = toolCall
         req.options = options
-        synchronized(this.clientRequestLock) {
-            this.rpcServer.request<RequestPermissionRequest, RequestPermissionResponse>(
-                "session/request_permission", params: req, timeout: timeout)
-        }
+        this.rpcServer.request<RequestPermissionRequest, RequestPermissionResponse>(
+            "session/request_permission", params: req, timeout: timeout)
     }
 
     public func createTerminal(req: CreateTerminalRequest, timeout!: Duration = 30 * Duration.second): Result<CreateTerminalResponse> {
-        synchronized(this.clientRequestLock) {
-            this.rpcServer.request<CreateTerminalRequest, CreateTerminalResponse>("terminal/create", params: req, timeout: timeout)
-        }
+        this.rpcServer.request<CreateTerminalRequest, CreateTerminalResponse>("terminal/create", params: req, timeout: timeout)
     }
 
     public func terminalOutput(req: TerminalOutputRequest, timeout!: Duration = 30 * Duration.second): Result<TerminalOutputResponse> {
-        synchronized(this.clientRequestLock) {
-            this.rpcServer.request<TerminalIdRequest, TerminalOutputResponse>("terminal/output", params: req, timeout: timeout)
-        }
+        this.rpcServer.request<TerminalIdRequest, TerminalOutputResponse>("terminal/output", params: req, timeout: timeout)
     }
 
     public func terminalWaitForExit(req: WaitForTerminalExitRequest, timeout!: Duration = 10 * Duration.minute): Result<WaitForTerminalExitResponse> {
-        synchronized(this.clientRequestLock) {
-            this.rpcServer.request<TerminalIdRequest, WaitForTerminalExitResponse>("terminal/wait_for_exit", params: req, timeout: timeout)
-        }
+        this.rpcServer.request<TerminalIdRequest, WaitForTerminalExitResponse>("terminal/wait_for_exit", params: req, timeout: timeout)
     }
 
     public func terminalKill(req: KillTerminalRequest, timeout!: Duration = 30 * Duration.second): Result<EmptyResult> {
-        synchronized(this.clientRequestLock) {
-            this.rpcServer.request<TerminalIdRequest, EmptyResult>("terminal/kill", params: req, timeout: timeout)
-        }
+        this.rpcServer.request<TerminalIdRequest, EmptyResult>("terminal/kill", params: req, timeout: timeout)
     }
 
     public func terminalRelease(req: ReleaseTerminalRequest, timeout!: Duration = 30 * Duration.second): Result<EmptyResult> {
-        synchronized(this.clientRequestLock) {
-            this.rpcServer.request<TerminalIdRequest, EmptyResult>("terminal/release", params: req, timeout: timeout)
-        }
+        this.rpcServer.request<TerminalIdRequest, EmptyResult>("terminal/release", params: req, timeout: timeout)
     }
 
     public func readTextFile(req: ReadTextFileRequest, timeout!: Duration = 30 * Duration.second): Result<ReadTextFileResponse> {
-        synchronized(this.clientRequestLock) {
-            this.rpcServer.request<ReadTextFileRequest, ReadTextFileResponse>("fs/read_text_file", params: req, timeout: timeout)
-        }
+        this.rpcServer.request<ReadTextFileRequest, ReadTextFileResponse>("fs/read_text_file", params: req, timeout: timeout)
     }
 
     public func writeTextFile(req: WriteTextFileRequest, timeout!: Duration = 30 * Duration.second): Result<EmptyResult> {
-        synchronized(this.clientRequestLock) {
-            this.rpcServer.request<WriteTextFileRequest, EmptyResult>("fs/write_text_file", params: req, timeout: timeout)
-        }
+        this.rpcServer.request<WriteTextFileRequest, EmptyResult>("fs/write_text_file", params: req, timeout: timeout)
     }
 }
