@@ -82,7 +82,9 @@ public class SubprocessTransport <: Transport {
             this.process.terminate(force: true)
             this.process.wait()
         } catch (e: Exception) {
-            // 忽略关闭异常
+            // 关闭异常意味着子进程可能未被回收（残留进程/僵尸），不致命但必须可见。
+            // 诊断走 stderr：stdout 是 ACP 帧通道（同进程可能同时使用 StdioTransport）。
+            eprintln("[acp-cj] SubprocessTransport.close: 终止子进程失败: " + e.toString())
         }
     }
 
