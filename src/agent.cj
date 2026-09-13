@@ -363,7 +363,15 @@ public class AcpAgent {
             if (s.cancelFlag.load()) { s.cancelFlag.store(false) }
             let pc = PromptContext(s.sessionId, s.cwd, params.prompt, { u => this.sessionUpdate(s.sessionId, u) },
                 s.cancelFlag, { => this.clientCapabilities })
-            let resp = handler(pc)
+            let resp = try {
+                handler(pc)
+            } catch (e: Exception) {
+                // 处理器异常若直接逃逸：complete/fail 都不会被调用 → 客户端一直等到 prompt 超时
+                // （表现为「点了没反应」），且没有任何线索。先留痕（会话/请求上下文）再原样上抛，
+                // 控制流与响应语义保持不变。
+                eprintln("[acp-cj] prompt handler failed (session '${s.sessionId}'): " + e.toString())
+                throw e
+            }
             // 若回合结束时取消标志仍为真，且处理器返回 end_turn，统一转为 cancelled
             let finalResp = if (s.cancelFlag.load() && resp.stopReason == StopReasonEndTurn) {
                 PromptResponse(StopReasonCancelled)

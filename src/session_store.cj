@@ -4,7 +4,7 @@ import jsonvalue.*
 import stdx.encoding.json.stream.*
 import std.collection.*
 import std.sync.*
-import std.fs.{File, Path}
+import std.fs.{File, Path, exists}
 import acp.types.*
 
 /**
@@ -95,6 +95,11 @@ public class SessionStore {
 
     public func reload(): Unit {
         synchronized(this.lock) {
+            // 首次启动时映射文件尚未创建：属正常情况，不产生诊断噪音
+            // （记录仍保持原样，与「加载失败视为空库」的语义一致）
+            if (!exists(Path(this.filePath))) {
+                return
+            }
             try {
                 let text = String.fromUtf8(File.readFrom(Path(this.filePath)))
                 let jv = JsonValue.parse(text)
@@ -104,13 +109,17 @@ public class SessionStore {
                             try {
                                 this.records.add(k, reparse<SessionRecord>(v))
                             } catch (e: Exception) {
-                                // 跳过损坏的记录
+                                // 跳过损坏记录会让该会话静默丢失（session/load 再也找不到它）。
+                                // stdout 是 ACP 帧通道，诊断一律走 stderr。
+                                eprintln("[acp-cj] session_store: 跳过损坏记录 '${k}': " + e.toString())
                             }
                         }
                     case _ => ()
                 }
             } catch (e: Exception) {
-                // 文件不存在或解析失败：视为空库
+                // 文件存在但解析失败：全部会话映射不可恢复（跨进程恢复失效），
+                // 必须可见，否则表现为「会话凭空消失」。
+                eprintln("[acp-cj] session_store: 加载 '${this.filePath}' 失败（视为空库）: " + e.toString())
             }
         }
     }
@@ -124,7 +133,8 @@ public class SessionStore {
         try {
             File.writeTo(Path(this.filePath), jv.toBytes())
         } catch (e: Exception) {
-            // 持久化失败不致命（仅影响跨进程恢复）
+            // 持久化失败不致命（仅影响跨进程恢复），但会话映射就此丢失且无任何痕迹 → 必须可见
+            eprintln("[acp-cj] session_store: 持久化 '${this.filePath}' 失败: " + e.toString())
         }
     }
 }
