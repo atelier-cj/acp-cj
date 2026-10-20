@@ -1,0 +1,166 @@
+[33mwarning[0m: '--static' option is only effective when compiling executables.
+ [36m#[0m [0mnote[0m: this warning can be suppressed by setting the compiler option `-Woff driver-arg`
+[33mwarning[0m: '--static' option is only effective when compiling executables.
+ [36m#[0m [0mnote[0m: this warning can be suppressed by setting the compiler option `-Woff driver-arg`
+[?25l[0J7[;r8
+[1F7[9999E8[0J7[;r8
+
+
+
+[4F7[9999E[3F📦 group acp                          12% [90m[[0m[32m[0m[32m[0m[32m[0m[32m|[0m[32m[0m[32m[0m[32m|[0m[32m[0m[90m------------------[0m[90m][0m [32m    [0m (00:00:00)
+🧪 test TestCase_agent_cancel_request_by_id.agent_cancel_requ...      (00:00:00)
+
+passed: [32m8[0m, failed: 0                 12% [90m[[0m[32m[0m[32m[0m[32m[0m[32m|[0m[32m[0m[32m[0m[32m|[0m[32m[0m[90m------------------[0m[90m][0m  8/66 (00:00:00) 8[0J7[;r8
+
+
+
+[4F7[9999E[3F📦 group acp                          30% [90m[[0m[32m[0m[32m[0m[32m[0m[32m|[0m[32m[0m[32m[0m[32m|[0m[32m[0m[32m[0m[32m|[0m[32m[0m[32m[0m[32m[0m[32m|[0m[32m[0m[32m[0m[32m|[0m[32m[0m[32m[0m[32m|[0m[90m--------------[0m[90m][0m [32m    [0m (00:00:00)
+🧪 test TestCase_agent_concurrent_reverse_requests_overlap_an...      (00:00:00)
+
+passed: [32m20[0m, failed: 0                30% [90m[[0m[32m[0m[32m[0m[32m[0m[32m|[0m[32m[0m[32m[0m[32m|[0m[32m[0m[32m[0m[32m|[0m[32m[0m[32m[0m[32m[0m[32m|[0m[32m[0m[32m[0m[32m|[0m[32m[0m[32m[0m[32m|[0m[90m--------------[0m[90m][0m 20/66 (00:00:00) 8--------------------------------------------------------------------------------------------------
+TP: [33macp[0m, time elapsed: 1015288503 ns, RESULT:
+    TCS: [33mTestCase_agent_connect_new_session_prompt[0m, time elapsed: 2320255 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_connect_new_session_prompt (1593192 ns)
+    TCS: [33mTestCase_agent_prompt_unknown_session_errors[0m, time elapsed: 650625 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_prompt_unknown_session_errors (533188 ns)
+    TCS: [33mTestCase_agent_cancel_prompt_returns_cancelled[0m, time elapsed: 239983177 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_cancel_prompt_returns_cancelled (239565142 ns)
+    TCS: [33mTestCase_agent_request_permission_roundtrip[0m, time elapsed: 1360273 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_request_permission_roundtrip (1148866 ns)
+    TCS: [33mTestCase_agent_set_mode_and_config_option[0m, time elapsed: 1288295 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_set_mode_and_config_option (1121443 ns)
+    TCS: [33mTestCase_agent_load_and_delete_session[0m, time elapsed: 1168164 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_load_and_delete_session (1014287 ns)
+    TCS: [33mTestCase_agent_usage_update_notification[0m, time elapsed: 1702213 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_usage_update_notification (1488160 ns)
+    TCS: [33mTestCase_agent_resume_session[0m, time elapsed: 654602 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_resume_session (469115 ns)
+    TCS: [33mTestCase_agent_cancel_request_by_id[0m, time elapsed: 238448096 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_cancel_request_by_id (238055059 ns)
+    TCS: [33mTestCase_session_store_persist_roundtrip[0m, time elapsed: 982344 ns, RESULT:
+    [[32m PASSED [0m] CASE: session_store_persist_roundtrip (720380 ns)
+    TCS: [33mTestCase_agent_load_replays_history_then_responds[0m, time elapsed: 1867512 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_load_replays_history_then_responds (1706601 ns)
+    TCS: [33mTestCase_agent_auth_required_gating[0m, time elapsed: 958158 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_auth_required_gating (849149 ns)
+    TCS: [33mTestCase_agent_logout_clears_auth[0m, time elapsed: 564007 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_logout_clears_auth (459847 ns)
+    TCS: [33mTestCase_client_terminal_login_exit_code[0m, time elapsed: 5733107 ns, RESULT:
+    [[32m PASSED [0m] CASE: client_terminal_login_exit_code (5539694 ns)
+    TCS: [33mTestCase_agent_records_client_capabilities[0m, time elapsed: 648541 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_records_client_capabilities (524753 ns)
+    TCS: [33mTestCase_agent_preserves_client_capabilities[0m, time elapsed: 436302 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_preserves_client_capabilities (340316 ns)
+    TCS: [33mTestCase_agent_prompt_context_can_query_client_caps[0m, time elapsed: 714658 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_prompt_context_can_query_client_caps (601831 ns)
+    TCS: [33mTestCase_agent_extension_method_roundtrip[0m, time elapsed: 547355 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_extension_method_roundtrip (447483 ns)
+    TCS: [33mTestCase_agent_extension_method_must_start_with_underscore[0m, time elapsed: 148717 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_extension_method_must_start_with_underscore (67401 ns)
+    TCS: [33mTestCase_agent_typed_reverse_handlers_roundtrip[0m, time elapsed: 1484573 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_typed_reverse_handlers_roundtrip (1365795 ns)
+    TCS: [33mTestCase_agent_concurrent_reverse_requests_overlap_and_pair_by_id[0m, time elapsed: 462302636 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_concurrent_reverse_requests_overlap_and_pair_by_id (462005324 ns)
+    TCS: [33mTestCase_agent_rejects_relative_cwd[0m, time elapsed: 766929 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_rejects_relative_cwd (568366 ns)
+    TCS: [33mTestCase_agent_protocol_version_negotiation[0m, time elapsed: 420310 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_protocol_version_negotiation (330358 ns)
+    TCS: [33mTestCase_agent_elicitation_requires_advertised_mode[0m, time elapsed: 857664 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_elicitation_requires_advertised_mode (747863 ns)
+    TCS: [33mTestCase_agent_elicitation_form_accept_roundtrip[0m, time elapsed: 1065665 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_elicitation_form_accept_roundtrip (969961 ns)
+    TCS: [33mTestCase_agent_elicitation_url_and_complete[0m, time elapsed: 16620677 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_elicitation_url_and_complete (16252116 ns)
+    TCS: [33mTestCase_agent_new_session_returns_initial_state[0m, time elapsed: 1844828 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_new_session_returns_initial_state (1597650 ns)
+    TCS: [33mTestCase_agent_new_session_without_initial_state_handler[0m, time elapsed: 491628 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_new_session_without_initial_state_handler (369021 ns)
+    TCS: [33mTestCase_agent_delete_clearsInternalSession[0m, time elapsed: 646567 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_delete_clearsInternalSession (545472 ns)
+    TCS: [33mTestCase_agent_new_session_with_additional_directories[0m, time elapsed: 466269 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_new_session_with_additional_directories (358391 ns)
+    TCS: [33mTestCase_agent_new_session_mcp_servers_queryable[0m, time elapsed: 572034 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_new_session_mcp_servers_queryable (467221 ns)
+    TCS: [33mTestCase_client_connect_and_new_session[0m, time elapsed: 454798 ns, RESULT:
+    [[32m PASSED [0m] CASE: client_connect_and_new_session (337381 ns)
+    TCS: [33mTestCase_client_prompt_streams_notification[0m, time elapsed: 846843 ns, RESULT:
+    [[32m PASSED [0m] CASE: client_prompt_streams_notification (650875 ns)
+    TCS: [33mTestCase_client_receives_extension_notification[0m, time elapsed: 14458806 ns, RESULT:
+    [[32m PASSED [0m] CASE: client_receives_extension_notification (14005814 ns)
+    TCS: [33mTestCase_client_connect_rejects_unsupported_protocol_version[0m, time elapsed: 1066738 ns, RESULT:
+    [[32m PASSED [0m] CASE: client_connect_rejects_unsupported_protocol_version (808459 ns)
+    TCS: [33mTestCase_content_text_roundtrip[0m, time elapsed: 127556 ns, RESULT:
+    [[32m PASSED [0m] CASE: content_text_roundtrip (29747 ns)
+    TCS: [33mTestCase_content_image_roundtrip[0m, time elapsed: 131183 ns, RESULT:
+    [[32m PASSED [0m] CASE: content_image_roundtrip (32814 ns)
+    TCS: [33mTestCase_content_resource_roundtrip[0m, time elapsed: 151793 ns, RESULT:
+    [[32m PASSED [0m] CASE: content_resource_roundtrip (55467 ns)
+    TCS: [33mTestCase_content_resource_link_roundtrip[0m, time elapsed: 122456 ns, RESULT:
+    [[32m PASSED [0m] CASE: content_resource_link_roundtrip (30268 ns)
+    TCS: [33mTestCase_update_agent_message_roundtrip[0m, time elapsed: 133819 ns, RESULT:
+    [[32m PASSED [0m] CASE: update_agent_message_roundtrip (44956 ns)
+    TCS: [33mTestCase_update_tool_call_roundtrip[0m, time elapsed: 126254 ns, RESULT:
+    [[32m PASSED [0m] CASE: update_tool_call_roundtrip (36350 ns)
+    TCS: [33mTestCase_update_tool_call_with_content_roundtrip[0m, time elapsed: 257406 ns, RESULT:
+    [[32m PASSED [0m] CASE: update_tool_call_with_content_roundtrip (152515 ns)
+    TCS: [33mTestCase_update_plan_roundtrip[0m, time elapsed: 252538 ns, RESULT:
+    [[32m PASSED [0m] CASE: update_plan_roundtrip (138807 ns)
+    TCS: [33mTestCase_update_usage_roundtrip[0m, time elapsed: 251074 ns, RESULT:
+    [[32m PASSED [0m] CASE: update_usage_roundtrip (94442 ns)
+    TCS: [33mTestCase_initialize_request_roundtrip[0m, time elapsed: 255463 ns, RESULT:
+    [[32m PASSED [0m] CASE: initialize_request_roundtrip (105323 ns)
+    TCS: [33mTestCase_initialize_response_roundtrip[0m, time elapsed: 313064 ns, RESULT:
+    [[32m PASSED [0m] CASE: initialize_response_roundtrip (150660 ns)
+    TCS: [33mTestCase_new_session_response_roundtrip[0m, time elapsed: 181570 ns, RESULT:
+    [[32m PASSED [0m] CASE: new_session_response_roundtrip (34316 ns)
+    TCS: [33mTestCase_prompt_request_roundtrip[0m, time elapsed: 198744 ns, RESULT:
+    [[32m PASSED [0m] CASE: prompt_request_roundtrip (57500 ns)
+    TCS: [33mTestCase_prompt_response_roundtrip[0m, time elapsed: 172953 ns, RESULT:
+    [[32m PASSED [0m] CASE: prompt_response_roundtrip (37191 ns)
+    TCS: [33mTestCase_permission_request_roundtrip[0m, time elapsed: 171561 ns, RESULT:
+    [[32m PASSED [0m] CASE: permission_request_roundtrip (72951 ns)
+    TCS: [33mTestCase_permission_outcome_selected_roundtrip[0m, time elapsed: 122897 ns, RESULT:
+    [[32m PASSED [0m] CASE: permission_outcome_selected_roundtrip (27884 ns)
+    TCS: [33mTestCase_agent_capabilities_roundtrip[0m, time elapsed: 166912 ns, RESULT:
+    [[32m PASSED [0m] CASE: agent_capabilities_roundtrip (69504 ns)
+    TCS: [33mTestCase_tool_call_content_diff_roundtrip[0m, time elapsed: 125873 ns, RESULT:
+    [[32m PASSED [0m] CASE: tool_call_content_diff_roundtrip (35639 ns)
+    TCS: [33mTestCase_tool_call_location_roundtrip[0m, time elapsed: 135992 ns, RESULT:
+    [[32m PASSED [0m] CASE: tool_call_location_roundtrip (41160 ns)
+    TCS: [33mTestCase_session_config_option_select_roundtrip[0m, time elapsed: 223351 ns, RESULT:
+    [[32m PASSED [0m] CASE: session_config_option_select_roundtrip (124941 ns)
+    TCS: [33mTestCase_session_mode_state_roundtrip[0m, time elapsed: 140321 ns, RESULT:
+    [[32m PASSED [0m] CASE: session_mode_state_roundtrip (47030 ns)
+    TCS: [33mTestCase_terminal_create_request_roundtrip[0m, time elapsed: 177352 ns, RESULT:
+    [[32m PASSED [0m] CASE: terminal_create_request_roundtrip (46340 ns)
+    TCS: [33mTestCase_session_notification_roundtrip[0m, time elapsed: 178233 ns, RESULT:
+    [[32m PASSED [0m] CASE: session_notification_roundtrip (62861 ns)
+    TCS: [33mTestCase_types_meta_roundtrip_on_requests[0m, time elapsed: 244011 ns, RESULT:
+    [[32m PASSED [0m] CASE: types_meta_roundtrip_on_requests (138959 ns)
+    TCS: [33mTestCase_types_elicitation_schema_roundtrip[0m, time elapsed: 546584 ns, RESULT:
+    [[32m PASSED [0m] CASE: types_elicitation_schema_roundtrip (434968 ns)
+    TCS: [33mTestCase_types_elicitation_request_response_roundtrip[0m, time elapsed: 937829 ns, RESULT:
+    [[32m PASSED [0m] CASE: types_elicitation_request_response_roundtrip (812848 ns)
+    TCS: [33mTestCase_types_elicitation_unknown_preserved[0m, time elapsed: 199264 ns, RESULT:
+    [[32m PASSED [0m] CASE: types_elicitation_unknown_preserved (94443 ns)
+    TCS: [33mTestCase_types_elicitation_capabilities_roundtrip[0m, time elapsed: 220806 ns, RESULT:
+    [[32m PASSED [0m] CASE: types_elicitation_capabilities_roundtrip (123037 ns)
+    TCS: [33mTestCase_types_mcpserver_stdio_roundtrip[0m, time elapsed: 234542 ns, RESULT:
+    [[32m PASSED [0m] CASE: types_mcpserver_stdio_roundtrip (137876 ns)
+    TCS: [33mTestCase_types_mcpserver_http_sse_roundtrip[0m, time elapsed: 280401 ns, RESULT:
+    [[32m PASSED [0m] CASE: types_mcpserver_http_sse_roundtrip (161812 ns)
+    TCS: [33mTestCase_types_mcpserver_shape_filtering[0m, time elapsed: 173374 ns, RESULT:
+    [[32m PASSED [0m] CASE: types_mcpserver_shape_filtering (72800 ns)
+Summary: TOTAL: 66
+    [32mPASSED[0m: 66, [32mSKIPPED[0m: 0, ERROR: 0
+    [31mFAILED[0m: 0
+--------------------------------------------------------------------------------------------------
+Project tests finished, time elapsed: 1022050404 ns, RESULT:
+TP: [33macp[0m.*, time elapsed: 1021959609 ns, RESULT:
+    PASSED:
+    TP: [33macp[0m, time elapsed: 1015288503 ns
+Summary: TOTAL: 66
+    [32mPASSED[0m: 66, [32mSKIPPED[0m: 0, ERROR: 0
+    [31mFAILED[0m: 0
+--------------------------------------------------------------------------------------------------
+[0J7[;r8[?25hcjpm bundle success
