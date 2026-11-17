@@ -3,7 +3,7 @@ package acp
 import acp.types.*
 import acp.transport.*
 import jsonvalue.*
-import ystyle::jsonrpc.{Result, JsonRpcError}
+import ystyle::jsonrpc.{Result, JsonRpcError, Transport}
 import std.collection.*
 import std.sync.*
 import std.time.DateTime
@@ -87,7 +87,8 @@ public func agent_prompt_unknown_session_errors() {
     let pResult = client.promptText("sess_unknown", "hi")
     match (pResult) {
         case Result.Ok(_) => @Fail("expected error for unknown session")
-        case Result.Err(e) => @Expect(e.contains("-32602"), true)
+        // ACP-ERROR-003：未知会话一律 -32002（data.sessionId 由下面的裸帧用例断言）
+        case Result.Err(e) => @Expect(e.contains("-32002"), true)
     }
     client.close()
     agent.close()
@@ -263,10 +264,10 @@ public func agent_load_and_delete_session() {
         case Result.Ok(_) => ()
         case Result.Err(e) => @Fail("deleteSession failed: ${e}")
     }
-    // delete 失败
+    // delete 不存在的会话：静默成功（ACP-DELETE-002 幂等）
     match (client.deleteSession("sess_missing")) {
-        case Result.Ok(_) => @Fail("expected deleteSession error")
-        case Result.Err(_) => ()
+        case Result.Ok(_) => ()
+        case Result.Err(e) => @Fail("deleting a missing session must succeed silently, got: ${e}")
     }
     // close 成功（有该会话）
     let sessionId = match (client.newSession("/tmp/proj")) {
@@ -1186,7 +1187,7 @@ public func agent_new_session_without_initial_state_handler() {
     agent.close()
 }
 
-// session/delete 成功后内部会话状态清理：后续 prompt 该 id 返回 -32602
+// session/delete 成功后内部会话状态清理：后续 prompt 该 id 返回 -32002（未知会话）
 @Test
 public func agent_delete_clearsInternalSession() {
     let pair = PipePair()
@@ -1205,11 +1206,11 @@ public func agent_delete_clearsInternalSession() {
         case Result.Ok(_) => ()
         case Result.Err(e) => return @Fail("delete failed: ${e}")
     }
-    // 删除后 prompt 同 id → -32602（内部状态已清理）
+    // 删除后 prompt 同 id → -32002（内部状态已清理，与「从未创建」同义）
     let pResult = client.promptText(sessionId, "hi")
     match (pResult) {
         case Result.Ok(_) => @Fail("expected error for deleted session")
-        case Result.Err(e) => @Expect(e.contains("-32602"), true)
+        case Result.Err(e) => @Expect(e.contains("-32002"), true)
     }
     client.close()
     agent.close()
@@ -1284,5 +1285,314 @@ public func agent_new_session_mcp_servers_queryable() {
     }
     @Expect(agent.sessionMcpServers("sess_unknown").isNone(), true)
     client.close()
+    agent.close()
+}
+
+// ===================== 协议一致性（ACP TCK 判据） =====================
+// 这些判据看的是 JSON-RPC 错误对象本身（code / data），而 AcpClient 把错误压成
+// "[code] message" 字符串、丢掉 data，所以这里直接用裸帧读写。
+
+// 裸 JSON-RPC 读端：按 ACP 的换行帧切分，只取与请求 id 匹配的响应
+class RawPeer {
+    private let transport: Transport
+    private let buf = ArrayList<UInt8>()
+    private var consumed: Int64 = 0
+    private var nextId: Int64 = 1
+
+    public init(transport: Transport) { this.transport = transport }
+
+    // 读一条完整帧；超时返回 None
+    private func readFrame(): ?JsonValue {
+        var idle: Int64 = 0
+        while (idle < 200) {
+            let arr = this.buf.toArray()
+            var idx: Int64 = -1
+            for (i in this.consumed..arr.size) {
+                if (arr[i] == 10) { idx = i; break }
+            }
+            if (idx >= 0) {
+                let line = String.fromUtf8(arr[this.consumed..idx])
+                this.consumed = idx + 1
+                if (this.consumed >= this.buf.size) {
+                    this.buf.clear()
+                    this.consumed = 0
+                }
+                if (line.trimAscii().isEmpty()) { continue }
+                return Some(JsonValue.parse(line))
+            }
+            match (this.transport.receive()) {
+                case Some(chunk) =>
+                    for (b in chunk) { this.buf.add(b) }
+                case None => idle++
+            }
+        }
+        None
+    }
+
+    // ACP 以 LF 分帧：发送时必须补换行，否则对端一直等下一帧
+    private func writeLine(line: String): Unit {
+        this.transport.send((line + "\n").toArray())
+    }
+
+    // 发送请求并返回其响应（跳过通知与本请求之外的响应）
+    public func request(method: String, paramsJson: String): JsonValue {
+        let id = this.nextId
+        this.nextId++
+        this.writeLine("{\"jsonrpc\":\"2.0\",\"id\":" + id.toString() +
+            ",\"method\":\"" + method + "\",\"params\":" + paramsJson + "}")
+        var tries: Int64 = 0
+        while (tries < 400) {
+            tries++
+            match (this.readFrame()) {
+                case Some(v) =>
+                    match (v["id"]) {
+                        case Some(jv) => match (jv.asNumber()) {
+                            case Some(n) => if (Int64(n) == id) { return v }
+                            case None => ()
+                        }
+                        case None => ()
+                    }
+                case None => break
+            }
+        }
+        JsonValue.Null
+    }
+}
+
+// JSON 字符串字面量（避免在测试里手写转义）
+func jstr(s: String): String { "\"" + s + "\"" }
+
+// 响应里的 result 对象（无 result 时返回 Null）
+func resultOf(resp: JsonValue): JsonValue { resp["result"] ?? JsonValue.Null }
+
+// 从可选 JsonValue 取字符串（缺省空串）
+func strOf(v: ?JsonValue): String {
+    match (v) {
+        case Some(jv) => jv.asString() ?? ""
+        case None => ""
+    }
+}
+
+// 断言「未知会话」类错误：-32002 且 data.sessionId 为请求的 id（ACP-ERROR-003/004）
+func expectUnknownSessionError(resp: JsonValue, sessionId: String) {
+    let err = match (resp["error"]) {
+        case Some(e) => e
+        case None => return @Fail("expected -32002 error, got " + resp.stringify())
+    }
+    match (err["code"]) {
+        case Some(c) => match (c.asNumber()) {
+            case Some(n) => @Expect(Int64(n), RESOURCE_NOT_FOUND)
+            case None => @Fail("error.code is not a number: " + resp.stringify())
+        }
+        case None => @Fail("error has no code: " + resp.stringify())
+    }
+    match (err["data"]) {
+        case Some(d) => match (d["sessionId"]) {
+            case Some(sid) => @Expect(sid.asString() ?? "", sessionId)
+            case None => @Fail("error.data has no sessionId: " + resp.stringify())
+        }
+        case None => @Fail("error has no data.sessionId: " + resp.stringify())
+    }
+}
+
+// 断言错误码（非未知会话类判据）
+func expectErrorCode(resp: JsonValue, code: Int64) {
+    let err = match (resp["error"]) {
+        case Some(e) => e
+        case None => return @Fail("expected error ${code}, got " + resp.stringify())
+    }
+    match (err["code"]) {
+        case Some(c) => match (c.asNumber()) {
+            case Some(n) => @Expect(Int64(n), code)
+            case None => @Fail("error.code is not a number: " + resp.stringify())
+        }
+        case None => @Fail("error has no code: " + resp.stringify())
+    }
+}
+
+// ACP-CLOSE-003：session/close 幂等——重复关闭、关闭从未创建的会话都返回空结果
+@Test
+public func agent_close_session_is_idempotent() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.capabilities.sessionCapabilities.close = Some(EmptyCapability())
+    agent.start()
+    let client = AcpClient(pair.a())
+    client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())
+    let sessionId = match (client.newSession("/tmp/proj")) {
+        case Result.Ok(resp) => resp.sessionId
+        case Result.Err(e) => return @Fail("newSession failed: ${e}")
+    }
+    // 首次关闭
+    match (client.closeSession(sessionId)) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("first close failed: ${e}")
+    }
+    // 再次关闭同一会话：仍成功
+    match (client.closeSession(sessionId)) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => @Fail("closing an already-closed session must succeed, got: ${e}")
+    }
+    // 关闭从未创建的会话：仍成功
+    match (client.closeSession("sess_never_created")) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => @Fail("closing a never-created session must succeed, got: ${e}")
+    }
+    client.close()
+    agent.close()
+}
+
+// ACP-DELETE-002：session/delete 对不存在/已删除的会话静默成功
+@Test
+public func agent_delete_session_is_idempotent() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    // 宿主只认得 sess_known：其余一律视为「不存在」
+    agent.setOnDeleteSession({ sid => sid == "sess_known" })
+    agent.start()
+    let client = AcpClient(pair.a())
+    client.connect(Implementation("test-client", "1.0.0"), ClientCapabilities())
+    // 从未创建
+    match (client.deleteSession("sess_never_created")) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("deleting a never-created session must succeed silently, got: ${e}")
+    }
+    // 已删除（第二次）
+    match (client.deleteSession("sess_known")) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => return @Fail("first delete failed: ${e}")
+    }
+    match (client.deleteSession("sess_known")) {
+        case Result.Ok(_) => ()
+        case Result.Err(e) => @Fail("deleting an already-deleted session must succeed silently, got: ${e}")
+    }
+    client.close()
+    agent.close()
+}
+
+// ACP-ERROR-003：session/prompt 指向不存在或已关闭会话 → -32002 + data.sessionId
+@Test
+public func agent_prompt_unknown_or_closed_session_resource_not_found() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.capabilities.sessionCapabilities.close = Some(EmptyCapability())
+    agent.setPromptHandler({ ctx => PromptResponse(StopReasonEndTurn) })
+    agent.start()
+
+    let peer = RawPeer(pair.a())
+    peer.request("initialize", "{}")
+    let promptParams = "{\"sessionId\":" + jstr("sess_never_created") +
+        ",\"prompt\":[{\"type\":\"text\",\"text\":\"hi\"}]}"
+    expectUnknownSessionError(peer.request("session/prompt", promptParams), "sess_never_created")
+
+    // 关闭后的会话与「不存在」等价
+    let newResp = peer.request("session/new", "{\"cwd\":\"/tmp/proj\",\"mcpServers\":[]}")
+    let sessionId = strOf(resultOf(newResp)["sessionId"])
+    if (sessionId.isEmpty()) { return @Fail("session/new failed: " + newResp.stringify()) }
+    let closeResp = peer.request("session/close", "{\"sessionId\":" + jstr(sessionId) + "}")
+    match (closeResp["error"]) {
+        case Some(_) => return @Fail("session/close failed: " + closeResp.stringify())
+        case None => ()
+    }
+    let closedPrompt = "{\"sessionId\":" + jstr(sessionId) +
+        ",\"prompt\":[{\"type\":\"text\",\"text\":\"hi\"}]}"
+    expectUnknownSessionError(peer.request("session/prompt", closedPrompt), sessionId)
+    agent.close()
+}
+
+// ACP-ERROR-004：set_mode / set_config_option / load / resume 指向不存在会话
+// → -32002 + data.sessionId（load 由宿主用 unknownSessionError 构造，验证该 helper 的形状）
+@Test
+public func agent_session_methods_unknown_session_resource_not_found() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.capabilities.loadSession = true
+    agent.capabilities.sessionCapabilities.resume = Some(EmptyCapability())
+    agent.setOnSetMode({ _, _ => true })
+    agent.setOnSetConfigOption({ _, req => Some(ArrayList<SessionConfigOption>()) })
+    agent.setOnLoadSession({ req, complete, fail => fail(unknownSessionError(req.sessionId)) })
+    agent.setOnResumeSession({ req => None })
+    agent.start()
+
+    let peer = RawPeer(pair.a())
+    peer.request("initialize", "{}")
+    let sid = "sess_never_created"
+    let lifecycle = "{\"sessionId\":" + jstr(sid) + ",\"cwd\":\"/tmp/proj\",\"mcpServers\":[]}"
+
+    expectUnknownSessionError(
+        peer.request("session/set_mode", "{\"sessionId\":" + jstr(sid) + ",\"modeId\":\"code\"}"), sid)
+    expectUnknownSessionError(
+        peer.request("session/set_config_option",
+            "{\"sessionId\":" + jstr(sid) + ",\"configId\":\"model\",\"value\":\"m1\"}"), sid)
+    expectUnknownSessionError(peer.request("session/load", lifecycle), sid)
+    expectUnknownSessionError(peer.request("session/resume", lifecycle), sid)
+    agent.close()
+}
+
+// ACP-ERROR-005：initialize 之前的其它请求 → -32600，之后 initialize 恢复正常
+@Test
+public func agent_request_before_initialize_invalid_request() {
+    let pair = PipePair()
+    let agent = makeEchoAgent(pair)
+    let peer = RawPeer(pair.a())
+
+    // 首条消息即 session/new
+    expectErrorCode(peer.request("session/new", "{\"cwd\":\"/tmp/proj\",\"mcpServers\":[]}"),
+        INVALID_REQUEST)
+    // initialize 之后同一请求正常
+    let initResp = peer.request("initialize", "{}")
+    match (initResp["error"]) {
+        case Some(_) => return @Fail("initialize failed: " + initResp.stringify())
+        case None => ()
+    }
+    let newResp = peer.request("session/new", "{\"cwd\":\"/tmp/proj\",\"mcpServers\":[]}")
+    @Expect(strOf(resultOf(newResp)["sessionId"]).isEmpty(), false)
+    agent.close()
+}
+
+
+// ACP-LIST-003：session/list 收到 agent 从未签发过的 cursor → -32602（不能忽略后照常返回列表）
+func listStub(req: ListSessionsRequest): Result<ListSessionsResponse> {
+    match (req.cursor) {
+        case None =>
+            let info = SessionInfo()
+            info.sessionId = "sess_1"
+            info.cwd = "/tmp/proj"
+            let resp = ListSessionsResponse()
+            resp.sessions.add(info)
+            resp.nextCursor = Some("cur_issued")
+            Result.Ok(resp)
+        case Some(c) =>
+            // 宿主只签发过 cur_issued：其余都是「未签发」，必须回 -32602
+            if (c == "cur_issued") {
+                Result.Ok(ListSessionsResponse())
+            } else {
+                Result.Err("Unknown cursor: " + c)
+            }
+    }
+}
+
+@Test
+public func agent_list_rejects_unknown_cursor() {
+    let pair = PipePair()
+    let agent = AcpAgent(pair.b(), "test-agent", "0.1.0")
+    agent.capabilities.sessionCapabilities.list = Some(EmptyCapability())
+    agent.setOnListSessions(listStub)
+    agent.start()
+    let peer = RawPeer(pair.a())
+    peer.request("initialize", "{}")
+
+    // 不带 cursor：正常返回一页，并带 nextCursor
+    let page = peer.request("session/list", "{}")
+    @Expect(strOf(resultOf(page)["nextCursor"]), "cur_issued")
+    // 自己签发过的 cursor：正常
+    let page2 = peer.request("session/list", "{\"cursor\":" + jstr("cur_issued") + "}")
+    match (page2["error"]) {
+        case Some(_) => @Fail("issued cursor must be accepted: " + page2.stringify())
+        case None => ()
+    }
+    // 从未签发过的 cursor：-32602
+    expectErrorCode(peer.request("session/list", "{\"cursor\":" + jstr("_tck-never-issued-cursor") + "}"),
+        INVALID_PARAMS)
     agent.close()
 }

@@ -27,7 +27,10 @@ public class SessionInitialState {
 public type NewSessionCallback = (String /*sessionId*/, String /*cwd*/) -> Unit
 public type CancelCallback = (String /*sessionId*/) -> Unit
 public type CloseCallback = (String /*sessionId*/) -> Unit
-public type ListSessionsCallback = (ListSessionsRequest) -> ListSessionsResponse
+// session/list 回调：Ok 返回一页会话；Err(message) 表示请求参数非法 → -32602 Invalid params。
+// 协议要求 agent 自己判定 cursor 是否为它签发过的：未签发的 cursor 必须拒绝，
+// 不能忽略后照常返回列表（ACP-LIST-003）。这是该回调唯一的失败场景。
+public type ListSessionsCallback = (ListSessionsRequest) -> Result<ListSessionsResponse>
 public type SetModeCallback = (String /*sessionId*/, String /*modeId*/) -> Bool
 public type SetConfigOptionCallback = (String /*sessionId*/, SetSessionConfigOptionRequest) -> ?ArrayList<SessionConfigOption>
 // 异步会话加载：业务层负责重放历史（agent.sessionUpdate），完成后 complete(resp)，
@@ -145,6 +148,8 @@ public class AcpAgent {
     // 认证门控：true 表示 session/new 前必须通过 authenticate（或终端登录）
     public var authRequired: Bool = false
     private var authenticated: Bool = false
+    // 握手完成标志：initialize 之前到达的其它请求一律 -32600（规范 error.mdx）
+    private var handshakeDone: Bool = false
 
     // 业务钩子
     private var promptHandler: ?PromptHandler = None
@@ -262,6 +267,20 @@ public class AcpAgent {
 
     // ===================== 处理方法 =====================
 
+    // 把协议错误对象转成同步处理器结果（保留 data）
+    private func errResult(e: JsonRpcError): HandlerResult {
+        HandlerResult.err(e.code, e.message, data: e.data)
+    }
+
+    /**
+     * initialize 之前的请求门控：规范要求回 -32600（error.mdx）。
+     * 通知（无 JSON-RPC id）不会得到响应，无从回错，直接放行。
+     */
+    private func preInitialize(ctx: HandlerContext): ?JsonRpcError {
+        if (this.handshakeDone || ctx.requestId.isNone()) { return None }
+        Some(JsonRpcError(INVALID_REQUEST, "Received request before initialize"))
+    }
+
     private func handleInitialize(ctx: HandlerContext): HandlerResult {
         let params = ctx.getParams<InitializeRequest>()
         let requested = params?.protocolVersion ?? ProtocolVersionV1
@@ -269,6 +288,7 @@ public class AcpAgent {
         if (let Some(caps) <- params?.clientCapabilities) {
             this.clientCapabilities = caps
         }
+        this.handshakeDone = true
         let resp = InitializeResponse()
         resp.protocolVersion = if (requested == this.protocolVersion) { requested } else { this.protocolVersion }
         resp.agentInfo = Some(this.agentInfo)
@@ -278,6 +298,7 @@ public class AcpAgent {
     }
 
     private func handleNewSession(ctx: HandlerContext): HandlerResult {
+        if (let Some(e) <- this.preInitialize(ctx)) { return this.errResult(e) }
         let params = match (ctx.getParams<NewSessionRequest>()) {
             case Some(p) => p
             case None => return HandlerResult.err(INVALID_PARAMS, "Invalid session/new params")
@@ -331,6 +352,10 @@ public class AcpAgent {
     }
 
     private func doPrompt(ctx: HandlerContext, complete: (JsonValue) -> Unit, fail: (JsonRpcError) -> Unit): Unit {
+        if (let Some(e) <- this.preInitialize(ctx)) {
+            fail(e)
+            return
+        }
         let params = match (ctx.getParams<PromptRequest>()) {
             case Some(p) => p
             case None =>
@@ -339,7 +364,8 @@ public class AcpAgent {
         }
         let state = synchronized(this.sessionLock) { this.sessions.get(params.sessionId) }
         if (state.isNone()) {
-            fail(JsonRpcError(INVALID_PARAMS, "Unknown sessionId: ${params.sessionId}"))
+            // 未知会话与「已关闭」（关闭即移出会话表）同义：-32002 且 data.sessionId = 请求的 id
+            fail(unknownSessionError(params.sessionId))
             return
         }
         let s = state.getOrThrow()
@@ -402,6 +428,7 @@ public class AcpAgent {
     }
 
     private func handleCancel(ctx: HandlerContext): HandlerResult {
+        if (let Some(e) <- this.preInitialize(ctx)) { return this.errResult(e) }
         let params = ctx.getParams<CancelNotification>()
         let sessionId = params?.sessionId ?? ""
         if (let Some(s) <- synchronized(this.sessionLock) { this.sessions.get(sessionId) }) {
@@ -413,6 +440,7 @@ public class AcpAgent {
     }
 
     private func handleClose(ctx: HandlerContext): HandlerResult {
+        if (let Some(e) <- this.preInitialize(ctx)) { return this.errResult(e) }
         let params = ctx.getParams<CloseSessionRequest>()
         let sessionId = params?.sessionId ?? ""
         let removed = synchronized(this.sessionLock) {
@@ -420,31 +448,36 @@ public class AcpAgent {
             this.sessions.remove(sessionId)
             s
         }
-        match (removed) {
-            case Some(s) =>
-                s.cancelFlag.store(true)
-                if (let Some(cb) <- this.onCloseCb) { cb(sessionId) }
-                HandlerResult.ok(JsonValue.fromObject(EmptyResult()))
-            case None => HandlerResult.err(INVALID_PARAMS, "Unknown sessionId: ${sessionId}")
+        // 幂等（ACP-CLOSE-003）：已关闭或从未创建的会话同样返回空结果；
+        // 只有确实存在过的会话才置取消标志并通知宿主
+        if (let Some(s) <- removed) {
+            s.cancelFlag.store(true)
+            if (let Some(cb) <- this.onCloseCb) { cb(sessionId) }
         }
+        HandlerResult.ok(JsonValue.fromObject(EmptyResult()))
     }
 
     private func handleListSessions(ctx: HandlerContext): HandlerResult {
+        if (let Some(e) <- this.preInitialize(ctx)) { return this.errResult(e) }
         let params = ctx.getParams<ListSessionsRequest>()
         match (this.listSessionsCb) {
             case Some(cb) =>
-                let resp = cb(params ?? ListSessionsRequest())
-                HandlerResult.ok(JsonValue.fromObject(resp))
+                match (cb(params ?? ListSessionsRequest())) {
+                    case Result.Ok(resp) => HandlerResult.ok(JsonValue.fromObject(resp))
+                    // 宿主判定的参数类失败（最典型：未签发过的 cursor）→ -32602
+                    case Result.Err(msg) => HandlerResult.err(INVALID_PARAMS, msg)
+                }
             case None => HandlerResult.err(METHOD_NOT_FOUND, "session/list not supported")
         }
     }
 
     private func handleSetMode(ctx: HandlerContext): HandlerResult {
+        if (let Some(e) <- this.preInitialize(ctx)) { return this.errResult(e) }
         let params = ctx.getParams<SetSessionModeRequest>()
         let sessionId = params?.sessionId ?? ""
         let modeId = params?.modeId ?? ""
         if (synchronized(this.sessionLock) { this.sessions.get(sessionId) }.isNone()) {
-            return HandlerResult.err(INVALID_PARAMS, "Unknown sessionId: ${sessionId}")
+            return this.errResult(unknownSessionError(sessionId))
         }
         match (this.setModeCb) {
             case Some(cb) =>
@@ -458,10 +491,11 @@ public class AcpAgent {
     }
 
     private func handleSetConfigOption(ctx: HandlerContext): HandlerResult {
+        if (let Some(e) <- this.preInitialize(ctx)) { return this.errResult(e) }
         let params = ctx.getParams<SetSessionConfigOptionRequest>()
         let sessionId = params?.sessionId ?? ""
         if (synchronized(this.sessionLock) { this.sessions.get(sessionId) }.isNone()) {
-            return HandlerResult.err(INVALID_PARAMS, "Unknown sessionId: ${sessionId}")
+            return this.errResult(unknownSessionError(sessionId))
         }
         match (this.setConfigOptionCb) {
             case Some(cb) =>
@@ -483,6 +517,10 @@ public class AcpAgent {
     }
 
     private func doLoadSession(ctx: HandlerContext, complete: (JsonValue) -> Unit, fail: (JsonRpcError) -> Unit): Unit {
+        if (let Some(e) <- this.preInitialize(ctx)) {
+            fail(e)
+            return
+        }
         let params = match (ctx.getParams<SessionLifecycleRequest>()) {
             case Some(p) => p
             case None =>
@@ -507,18 +545,22 @@ public class AcpAgent {
     }
 
     private func handleResumeSession(ctx: HandlerContext): HandlerResult {
+        if (let Some(e) <- this.preInitialize(ctx)) { return this.errResult(e) }
         let params = ctx.getParams<SessionLifecycleRequest>()
+        // 宿主返回 None = 它不认识这个会话（可能已被删除）：-32002 且 data.sessionId
+        let sessionId = params?.sessionId ?? ""
         match (this.resumeSessionCb) {
             case Some(cb) =>
                 match (cb(params ?? SessionLifecycleRequest())) {
                     case Some(resp) => HandlerResult.ok(JsonValue.fromObject(resp))
-                    case None => HandlerResult.err(INVALID_PARAMS, "Unknown sessionId")
+                    case None => this.errResult(unknownSessionError(sessionId))
                 }
             case None => HandlerResult.err(METHOD_NOT_FOUND, "session/resume not supported")
         }
     }
 
     private func handleCancelRequest(ctx: HandlerContext): HandlerResult {
+        if (let Some(e) <- this.preInitialize(ctx)) { return this.errResult(e) }
         // $/cancel_request 是通知：按 requestId 取消对应的进行中请求（主要是 session/prompt）
         let sessionId: ?String = match (ctx.getParam("requestId")) {
             case Some(v) =>
@@ -542,27 +584,28 @@ public class AcpAgent {
     }
 
     private func handleDeleteSession(ctx: HandlerContext): HandlerResult {
+        if (let Some(e) <- this.preInitialize(ctx)) { return this.errResult(e) }
         let params = ctx.getParams<DeleteSessionRequest>()
         let sessionId = params?.sessionId ?? ""
         match (this.deleteSessionCb) {
             case Some(cb) =>
-                if (cb(sessionId)) {
-                    // 删除成功后清理内部会话状态：后续 prompt 该 id 返回 -32602
-                    synchronized(this.sessionLock) {
-                        match (this.sessions.remove(sessionId)) {
-                            case Some(s) => s.cancelFlag.store(true)
-                            case None => ()
-                        }
+                // 幂等（ACP-DELETE-002）：宿主判定「没有这个会话」（返回 false）同样静默成功。
+                // 真实失败应由宿主抛异常（→ -32603），不要用 false 表达。
+                cb(sessionId)
+                // 清理内部会话状态：后续 prompt 该 id 即「未知会话」（-32002）
+                synchronized(this.sessionLock) {
+                    match (this.sessions.remove(sessionId)) {
+                        case Some(s) => s.cancelFlag.store(true)
+                        case None => ()
                     }
-                    HandlerResult.ok(JsonValue.fromObject(EmptyResult()))
-                } else {
-                    HandlerResult.err(RESOURCE_NOT_FOUND, "Unknown sessionId: ${sessionId}")
                 }
+                HandlerResult.ok(JsonValue.fromObject(EmptyResult()))
             case None => HandlerResult.err(METHOD_NOT_FOUND, "session/delete not supported")
         }
     }
 
     private func handleAuthenticate(ctx: HandlerContext): HandlerResult {
+        if (let Some(e) <- this.preInitialize(ctx)) { return this.errResult(e) }
         // 协议驱动认证：methodId 必须已在 authMethods 广告，
         // 且方法类型不是 terminal（terminal 型由客户端另起交互进程登录，不得走本流程）
         let methodId = ctx.getParams<AuthenticateRequest>()?.methodId ?? ""
@@ -583,6 +626,7 @@ public class AcpAgent {
     }
 
     private func handleLogout(ctx: HandlerContext): HandlerResult {
+        if (let Some(e) <- this.preInitialize(ctx)) { return this.errResult(e) }
         // 登出：清除认证状态
         this.authenticated = false
         if (let Some(cb) <- this.onLoggedOutCb) { cb("") }
