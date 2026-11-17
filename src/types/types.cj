@@ -1,6 +1,7 @@
 package acp.types
 
 import jsonvalue.*
+import ystyle::jsonrpc.JsonRpcError
 import stdx.encoding.json.stream.*
 import std.collection.{HashMap, ArrayList}
 import std.io.ByteBuffer
@@ -19,6 +20,21 @@ public const INTERNAL_ERROR: Int64 = -32603
 public const REQUEST_CANCELLED: Int64 = -32800
 public const AUTH_REQUIRED: Int64 = -32000
 public const RESOURCE_NOT_FOUND: Int64 = -32002
+
+// ===================== 错误构造 =====================
+
+/**
+ * 「未知/已关闭会话」的标准协议错误：-32002 且 data.sessionId 为请求的 id。
+ *
+ * 规范要求 session/prompt、session/set_mode、session/set_config_option、session/load、
+ * session/resume 指向 agent 不认识的会话时都返回这个形状。框架内部已统一，
+ * 宿主自己判定会话存活的回调（典型是 session/load：可能从持久化存储恢复）应返回它。
+ */
+public func unknownSessionError(sessionId: String): JsonRpcError {
+    let data = HashMap<String, JsonValue>()
+    data.add("sessionId", JsonValue.String(sessionId))
+    JsonRpcError(RESOURCE_NOT_FOUND, "Unknown sessionId: ${sessionId}", data: JsonValue.Map(data))
+}
 
 // ===================== 基础类型 =====================
 

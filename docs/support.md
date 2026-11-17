@@ -47,13 +47,13 @@
 | `logout` | ✅ | 内置 + `setOnLoggedOut` | 需广告 `agentCapabilities.auth.logout = {}` |
 | `session/new` | ✅ | 内置 + `setOnNewSession(sessionId, cwd)` + `setInitialSessionState` | cwd 绝对路径校验（`Path.isAbsolute`，否则 `-32602`）；响应可携带初始 `modes`/`configOptions`（A5） |
 | `session/load` | ✅ | `setOnLoadSession`（异步重放 → complete/fail）+ `SessionStore` 持久化 | 重放 `session/update` 历史后再响应，与规范一致；需广告 `loadSession: true` |
-| `session/list` | ✅ | `setOnListSessions` | 需广告 `sessionCapabilities.list`；分页 cursor 由回调返回 |
-| `session/delete` | ✅ | `setOnDeleteSession` | 未找到会话回 `-32002`；需广告 `sessionCapabilities.delete` |
-| `session/resume` | ✅ | `setOnResumeSession` | 需广告 `sessionCapabilities.resume` |
-| `session/close` | ✅ | 内置 + `setOnClose` | 从会话表移除并置取消标志；需广告 `sessionCapabilities.close` |
-| `session/set_mode` | ✅ | `setOnSetMode` | 模式合法性由回调裁决（false → `-32602`） |
-| `session/set_config_option` | ✅ | `setOnSetConfigOption` | `value` 联合类型已覆盖：`value_id`（默认，字符串）与 `type:"boolean"` + bool 两种变体序列化 |
-| `session/prompt` | ✅ | `setPromptHandler`（异步 `registerAsyncErr` + 会话级 Mutex 串行） | 回合中可 `ctx.emit(SessionUpdate)`、`ctx.isCancelled()`；结束统一归一 stopReason（取消 → `cancelled`） |
+| `session/list` | ✅ | `setOnListSessions`（返回 `Result<ListSessionsResponse>`） | 需广告 `sessionCapabilities.list`；分页 cursor 由回调签发并在下次请求时校验，`Result.Err(msg)` → `-32602`（未签发过的 cursor 必须拒绝，ACP-LIST-003） |
+| `session/delete` | ✅ | `setOnDeleteSession` | 幂等：不存在/已删除的会话静默成功（回调回 `false` 也成功；真实失败请抛异常 → `-32603`，ACP-DELETE-002）；需广告 `sessionCapabilities.delete` |
+| `session/resume` | ✅ | `setOnResumeSession` | 回调返回 `None` = 会话不存在 → `-32002` + `data.sessionId`（ACP-ERROR-004）；需广告 `sessionCapabilities.resume` |
+| `session/close` | ✅ | 内置 + `setOnClose` | 从会话表移除并置取消标志；幂等：已关闭/从未创建同样回空结果（ACP-CLOSE-003）；需广告 `sessionCapabilities.close` |
+| `session/set_mode` | ✅ | `setOnSetMode` | 未知会话 → `-32002` + `data.sessionId`；模式合法性由回调裁决（false → `-32602`，ACP-ERROR-004/007） |
+| `session/set_config_option` | ✅ | `setOnSetConfigOption` | 未知会话 → `-32002` + `data.sessionId`；`value` 联合类型已覆盖：`value_id`（默认，字符串）与 `type:"boolean"` + bool 两种变体序列化 |
+| `session/prompt` | ✅ | `setPromptHandler`（异步 `registerAsyncErr` + 会话级 Mutex 串行） | 未知/已关闭会话 → `-32002` + `data.sessionId`（ACP-ERROR-003）；回合中可 `ctx.emit(SessionUpdate)`、`ctx.isCancelled()`；结束统一归一 stopReason（取消 → `cancelled`） |
 
 ### 2.2 Agent → Client（Client 接口，共 9 个）
 
@@ -116,7 +116,7 @@
 | `fs.readTextFile` / `fs.writeTextFile` | Client 提供 fs 反向方法 | ✅ | |
 | `terminal` | Client 支持全部 `terminal/*` | ✅ | |
 | `auth.terminal` | Client 支持 terminal 认证 | ✅ | |
-| `session.configOptions.boolean` | Client 支持布尔配置项 | ✅ | `ClientSessionCapabilities.configOptions` |
+| `session.configOptions.boolean` | Client 支持布尔配置项 | ✅ | 结构化 `SessionConfigOptionsCapabilities{boolean?}`（省略/null=不支持、`{}`=支持）；`ClientCapabilities.supportsBooleanConfigOptions()` 读取，`filterConfigOptionsForClient(opts, caps)` 过滤（未声明 boolean 时 MUST NOT 下发，ACP-CONFIG-003） |
 | `elicitation.form` / `elicitation.url` | Client 支持表单/URL 引导输入 | ✅ | 结构化 `ElicitationCapabilities{form?, url?}`，省略/null=不支持、`{}`=支持 |
 
 ---
@@ -180,13 +180,15 @@
 | [Terminals](https://agentclientprotocol.com/protocol/v1/terminals) | ✅ | 5 方法双向封装齐（含 outputByteLimit、exitStatus） |
 | [Elicitation](https://agentclientprotocol.com/protocol/v1/elicitation) | ✅ | form/url 双模式、session/request 双域、三态响应、complete 通知、能力门控；未知模式保留 raw |
 | [Session List](https://agentclientprotocol.com/protocol/v1/session-list) | ✅ | cursor 分页 + session_info_update 动态元数据 |
-| [Session Delete](https://agentclientprotocol.com/protocol/v1/session-delete) | ✅ | -32002 语义 |
+| [Session Delete](https://agentclientprotocol.com/protocol/v1/session-delete) | ✅ | 幂等语义（已删除/不存在静默成功，ACP-DELETE-002） |
 | [Extensibility](https://agentclientprotocol.com/protocol/v1/extensibility) | ✅ | §2.4 |
 | [Transports](https://agentclientprotocol.com/protocol/v1/transports) | ✅ | stdio + 自定义传输；Streamable HTTP 官方 draft ➖ |
 
 ### 错误码
 
-`-32700/-32600/-32601/-32602/-32603`（标准 JSON-RPC）、`-32800`（cancelled）、`-32000`（auth_required + data.authMethods）、`-32002`（resource not found）—— 常量与返回路径齐全 ✅
+`-32700/-32600/-32601/-32602/-32603`（标准 JSON-RPC）、`-32800`（cancelled）、`-32000`（auth_required + data.authMethods）、`-32002`（resource not found，未知/已关闭会话统一携带 `data.sessionId`，见 `unknownSessionError`）—— 常量与返回路径齐全 ✅
+
+`initialize` 之前到达的其它请求一律回 `-32600`（ACP-ERROR-005）；通知（无 JSON-RPC id）无法回错，直接放行。
 
 ---
 
