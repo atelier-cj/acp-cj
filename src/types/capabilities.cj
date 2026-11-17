@@ -180,9 +180,33 @@ public class AuthCapabilities <: JsonSerializable & JsonDeserializable<AuthCapab
     }
 }
 
+// SessionConfigOptionsCapabilities：客户端声明的 config option 扩展能力（schema 同名）。
+// 规范里 clientCapabilities.session.configOptions 是嵌套对象而非空标记：
+// 省略/null = 未声明任何扩展；`{}` = 声明了 configOptions 但未声明任何子能力。
+public class SessionConfigOptionsCapabilities <: JsonSerializable & JsonDeserializable<SessionConfigOptionsCapabilities> {
+    // boolean：客户端支持 type="boolean" 的 config option（`{}` = 支持，省略 = 不支持）
+    public var boolean: ?EmptyCapability = None
+    public init() {}
+    public func toJson(w: JsonWriter): Unit {
+        w.startObject()
+        if (let Some(v) <- this.boolean) { w.writeName("boolean").writeValue(v) }
+        w.endObject()
+    }
+    public static func fromJson(r: JsonReader): SessionConfigOptionsCapabilities {
+        let res = SessionConfigOptionsCapabilities()
+        fromJsonObject(r,
+            ("boolean", {=> res.boolean = r.readValue<Option<EmptyCapability>>()})
+        )
+        res
+    }
+
+    // 客户端是否声明支持 boolean 型 config option
+    public func supportsBoolean(): Bool { this.boolean.isSome() }
+}
+
 // ClientSessionCapabilities：当前仅 configOptions
 public class ClientSessionCapabilities <: JsonSerializable & JsonDeserializable<ClientSessionCapabilities> {
-    public var configOptions: ?EmptyCapability = None
+    public var configOptions: ?SessionConfigOptionsCapabilities = None
     public init() {}
     public func toJson(w: JsonWriter): Unit {
         w.startObject()
@@ -192,9 +216,17 @@ public class ClientSessionCapabilities <: JsonSerializable & JsonDeserializable<
     public static func fromJson(r: JsonReader): ClientSessionCapabilities {
         let res = ClientSessionCapabilities()
         fromJsonObject(r,
-            ("configOptions", {=> res.configOptions = r.readValue<Option<EmptyCapability>>()})
+            ("configOptions", {=> res.configOptions = r.readValue<Option<SessionConfigOptionsCapabilities>>()})
         )
         res
+    }
+
+    // 客户端是否声明 session.configOptions.boolean
+    public func supportsBooleanConfigOptions(): Bool {
+        match (this.configOptions) {
+            case Some(c) => c.supportsBoolean()
+            case None => false
+        }
     }
 }
 
@@ -249,4 +281,37 @@ public class ClientCapabilities <: JsonSerializable & JsonDeserializable<ClientC
         )
         res
     }
+
+    /**
+     * 客户端是否声明支持 boolean 型 session config option
+     * （clientCapabilities.session.configOptions.boolean）。未声明 session/configOptions 均为 false。
+     * agent 下发 configOptions 前必须用它判断（未声明时 MUST NOT 下发 type="boolean"）。
+     */
+    public func supportsBooleanConfigOptions(): Bool {
+        match (this.session) {
+            case Some(s) => s.supportsBooleanConfigOptions()
+            case None => false
+        }
+    }
+}
+
+/**
+ * 按客户端声明过滤 config options：客户端未声明 session.configOptions.boolean 时，
+ * 剔除 type="boolean" 的项（规范要求：未声明即 MUST NOT 下发）。
+ *
+ * 所有 configOptions 出口都应经过它：session/new 结果、session/set_config_option 结果、
+ * session/load / session/resume 结果、config_option_update 通知。
+ * 入参列表不被就地改写。
+ */
+public func filterConfigOptionsForClient(options: ArrayList<SessionConfigOption>,
+                                        caps: ClientCapabilities): ArrayList<SessionConfigOption> {
+    if (caps.supportsBooleanConfigOptions()) {
+        return ArrayList<SessionConfigOption>(options)
+    }
+    let out = ArrayList<SessionConfigOption>()
+    for (o in options) {
+        if (o.`type` == "boolean") { continue }
+        out.add(o)
+    }
+    out
 }

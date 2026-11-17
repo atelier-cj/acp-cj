@@ -705,3 +705,77 @@ public func types_mcpserver_shape_filtering() {
     let rt = roundTrip(other)
     @Expect(rt.transport(), "_custom")
 }
+
+// ===================== 客户端 session.configOptions 能力（ACP-CONFIG-003） =====================
+// 规范：agent 只有在客户端声明 clientCapabilities.session.configOptions.boolean 时
+// 才能下发 type="boolean" 的 config option。此前 configOptions 被拍平成 EmptyCapability，
+// 「声明了 configOptions」与「声明了 boolean」无法区分。
+
+@Test
+public func types_client_boolean_config_option_capability() {
+    // 声明 {session:{configOptions:{boolean:{}}}}：嵌套结构必须如实保留
+    let declaredJson = """
+        {"fs":{"readTextFile":false,"writeTextFile":false},"terminal":false,"session":{"configOptions":{"boolean":{}}}}
+        """
+    let declared = reparse<ClientCapabilities>(JsonValue.parse(declaredJson))
+    @Expect(declared.supportsBooleanConfigOptions(), true)
+    match (declared.session) {
+        case Some(s) =>
+            match (s.configOptions) {
+                case Some(c) => @Expect(c.boolean.isSome(), true)
+                case None => @Fail("session.configOptions lost")
+            }
+        case None => @Fail("session capability lost")
+    }
+    // 只声明 configOptions（空对象）：能区分「有 configOptions」与「支持 boolean」
+    let noBoolJson = """
+        {"session":{"configOptions":{}}}
+        """
+    let noBool = reparse<ClientCapabilities>(JsonValue.parse(noBoolJson))
+    @Expect(noBool.supportsBooleanConfigOptions(), false)
+    match (noBool.session) {
+        case Some(s) =>
+            @Expect(s.configOptions.isSome(), true)
+            match (s.configOptions) {
+                case Some(c) => @Expect(c.boolean.isNone(), true)
+                case None => @Fail("session.configOptions lost")
+            }
+        case None => @Fail("session capability lost")
+    }
+    // 完全未声明 session 能力
+    @Expect(ClientCapabilities().supportsBooleanConfigOptions(), false)
+    // 序列化往返：声明过的不丢
+    @Expect(roundTrip(declared).supportsBooleanConfigOptions(), true)
+    // 未声明 boolean 时不得写出 boolean 字段
+    @Expect(JsonValue.fromObject(noBool).stringify().contains("boolean"), false)
+}
+
+@Test
+public func types_config_options_filtered_by_client_boolean_support() {
+    let select = SessionConfigOption("model", "Model")
+    select.`type` = "select"
+    select.currentValue = Some("model-1")
+    let toggle = SessionConfigOption("compaction", "Compaction")
+    toggle.`type` = "boolean"
+    toggle.currentBool = Some(true)
+    let all = ArrayList<SessionConfigOption>([select, toggle])
+
+    // 客户端未声明 boolean：剔除 boolean 项（MUST NOT 下发）
+    let filtered = filterConfigOptionsForClient(all, ClientCapabilities())
+    @Expect(filtered.size, 1)
+    @Expect(filtered[0].id, "model")
+    // 调用方列表不被就地改写
+    @Expect(all.size, 2)
+
+    // 客户端声明了 boolean：原样下发，顺序不变
+    let declared = ClientCapabilities()
+    let sess = ClientSessionCapabilities()
+    let co = SessionConfigOptionsCapabilities()
+    co.boolean = Some(EmptyCapability())
+    sess.configOptions = Some(co)
+    declared.session = Some(sess)
+    let kept = filterConfigOptionsForClient(all, declared)
+    @Expect(kept.size, 2)
+    @Expect(kept[0].id, "model")
+    @Expect(kept[1].id, "compaction")
+}

@@ -86,7 +86,9 @@ JSON-RPC 标准错误（-32700/-32600/-32601/-32602/-32603）+ ACP 保留区间�
 
 - **AgentCapabilities**：`loadSession`、`promptCapabilities{image,audio,embeddedContext}`、
   `mcpCapabilities{http,sse}`、`sessionCapabilities{list,delete,resume,close,additionalDirectories}`、`auth{logout}`。
-- **ClientCapabilities**：`fs{readTextFile,writeTextFile}`、`terminal`、`auth{terminal}`、`elicitation`、`session{configOptions}`。
+- **ClientCapabilities**：`fs{readTextFile,writeTextFile}`、`terminal`、`auth{terminal}`、`elicitation`、
+  `session{configOptions{boolean}}`——`configOptions` 是嵌套对象（`SessionConfigOptionsCapabilities`），
+  不是空标记：`{}` 只表示"声明了 configOptions"，支持 boolean 需显式 `boolean: {}`。
 
 ---
 
