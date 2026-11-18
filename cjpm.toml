@@ -13,7 +13,7 @@ output-type = "static"
 override-compile-option = ""
 src-dir = ""
 target-dir = ""
-version = "0.3.0"
+version = "0.3.1"
 license = ["MulanPSL-2.0"]
 authors = ["ystyle"]
 repository = "https://atomgit.com/ystyle/acp-cj"
@@ -38,4 +38,11 @@ path-option = ["${CANGJIE_STDX_PATH}"]
 [target.aarch64-linux-ohos.bin-dependencies]
 path-option = ["${CANGJIE_STDX_PATH}"]
 [target.x86_64-linux-ohos.bin-dependencies]
+path-option = ["${CANGJIE_STDX_PATH}"]
+
+# stdx 的依赖声明方式：每个目标平台一块（stdx 不写进 [dependencies]）。
+# 缺块会在该平台构建时报 "imports package 'stdx...' not added as a dependency"。
+[target.aarch64-unknown-linux-gnu.bin-dependencies]
+path-option = ["${CANGJIE_STDX_PATH}"]
+[target.aarch64-apple-darwin.bin-dependencies]
 path-option = ["${CANGJIE_STDX_PATH}"]
